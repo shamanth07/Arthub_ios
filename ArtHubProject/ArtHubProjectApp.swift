@@ -13,11 +13,11 @@ class AppDelegate: NSObject, UIApplicationDelegate {
     func application(_ application: UIApplication,
                     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey : Any]? = nil) -> Bool {
         do {
-            // Configure Firebase
+          
             FirebaseApp.configure()
             print("Firebase configured successfully")
             
-            // Enable Firebase Analytics
+        
             Analytics.setAnalyticsCollectionEnabled(true)
             
             return true
@@ -30,7 +30,6 @@ class AppDelegate: NSObject, UIApplicationDelegate {
 
 @main
 struct ArtHubProjectApp: App {
-    // Register app delegate for Firebase setup
     @UIApplicationDelegateAdaptor(AppDelegate.self) var delegate
     
     var body: some Scene {

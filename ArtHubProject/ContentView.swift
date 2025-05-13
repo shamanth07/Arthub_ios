@@ -8,6 +8,7 @@
 import SwiftUI
 import PhotosUI
 import FirebaseAuth
+import FirebaseDatabase
 
 class AuthViewModel: ObservableObject {
     @Published var isLoading = false
@@ -32,7 +33,7 @@ class AuthViewModel: ObservableObject {
         }
     }
     
-    func signUp(email: String, password: String, completion: @escaping (Bool) -> Void) {
+    func signUp(email: String, password: String, role: String = "Visitor", completion: @escaping (Bool) -> Void) {
         isLoading = true
         errorMessage = nil
         
@@ -44,6 +45,14 @@ class AuthViewModel: ObservableObject {
                     self?.errorMessage = error.localizedDescription
                     completion(false)
                     return
+                }
+                
+                if let uid = result?.user.uid {
+                    let userDict: [String: Any] = [
+                        "email": email,
+                        "role": role
+                    ]
+                    Database.database().reference().child("users").child(uid).setValue(userDict)
                 }
                 
                 completion(true)
@@ -75,6 +84,128 @@ class AuthViewModel: ObservableObject {
     }
 }
 
+enum DataTab: String, CaseIterable {
+    case events = "Events"
+    case admins = "Admins"
+    case users = "Users"
+}
+
+class DatabaseManager: ObservableObject {
+    @Published var admins: [Admin] = []
+    @Published var users: [User] = []
+    @Published var events: [Event] = []
+    private var ref: DatabaseReference!
+    
+    init() {
+        ref = Database.database().reference()
+    }
+    
+    func fetchAdmins() {
+        ref.child("admin").observeSingleEvent(of: .value) { snapshot in
+            var fetched: [Admin] = []
+            for child in snapshot.children {
+                if let snap = child as? DataSnapshot,
+                   let dict = snap.value as? [String: Any],
+                   let email = dict["email"] as? String,
+                   let password = dict["password"] as? String,
+                   let role = dict["role"] as? String {
+                    fetched.append(Admin(email: email, password: password, role: role))
+                }
+            }
+            DispatchQueue.main.async {
+                self.admins = fetched
+            }
+        }
+    }
+    
+    func fetchUsers() {
+        ref.child("users").observeSingleEvent(of: .value) { snapshot in
+            var fetched: [User] = []
+            for child in snapshot.children {
+                if let snap = child as? DataSnapshot,
+                   let dict = snap.value as? [String: Any],
+                   let email = dict["email"] as? String,
+                   let password = dict["password"] as? String,
+                   let role = dict["role"] as? String {
+                    fetched.append(User(email: email, password: password, role: role))
+                }
+            }
+            DispatchQueue.main.async {
+                self.users = fetched
+            }
+        }
+    }
+    
+    func fetchEvents() {
+        ref.child("events").observeSingleEvent(of: .value) { snapshot in
+            var fetched: [Event] = []
+            for child in snapshot.children {
+                if let snap = child as? DataSnapshot,
+                   let dict = snap.value as? [String: Any],
+                   let title = dict["title"] as? String,
+                   let description = dict["description"] as? String,
+                   let bannerImageUrl = dict["bannerImageUrl"] as? String,
+                   let eventDate = dict["eventDate"] as? Double,
+                   let eventId = dict["eventId"] as? String,
+                   let maxArtists = dict["maxArtists"] as? Int,
+                   let time = dict["time"] as? String {
+                    fetched.append(Event(title: title, description: description, bannerImageUrl: bannerImageUrl, eventDate: eventDate, eventId: eventId, maxArtists: maxArtists, time: time))
+                }
+            }
+            DispatchQueue.main.async {
+                self.events = fetched
+            }
+        }
+    }
+    
+    func addEvent(_ event: Event) {
+        let eventDict: [String: Any] = [
+            "title": event.title,
+            "description": event.description,
+            "bannerImageUrl": event.bannerImageUrl,
+            "eventDate": event.eventDate,
+            "eventId": event.eventId,
+            "maxArtists": event.maxArtists,
+            "time": event.time
+        ]
+        ref.child("events").child(event.eventId).setValue(eventDict)
+    }
+    
+    func addUser(_ user: User) {
+        let userDict: [String: Any] = [
+            "email": user.email,
+            "password": user.password,
+            "role": user.role
+        ]
+        ref.child("users").childByAutoId().setValue(userDict)
+    }
+}
+
+struct Admin: Identifiable {
+    let id = UUID()
+    let email: String
+    let password: String
+    let role: String
+}
+
+struct User: Identifiable {
+    let id = UUID()
+    let email: String
+    let password: String
+    let role: String
+}
+
+struct Event: Identifiable {
+    let id = UUID()
+    let title: String
+    let description: String
+    let bannerImageUrl: String
+    let eventDate: Double
+    let eventId: String
+    let maxArtists: Int
+    let time: String
+}
+
 struct SplashScreen: View {
     var body: some View {
         ZStack {
@@ -91,6 +222,8 @@ struct SplashScreen: View {
 
 struct ContentView: View {
     @StateObject private var authVM = AuthViewModel()
+    @StateObject private var dbManager = DatabaseManager()
+    @State private var selectedTab: DataTab = .events
     @State private var email: String = ""
     @State private var password: String = ""
     @State private var isPasswordVisible: Bool = false
@@ -116,15 +249,12 @@ struct ContentView: View {
             } else {
                 VStack(spacing: 32) {
                     Spacer()
-               
                     VStack(spacing: 8) {
                         Image("arthub_logo")
                             .resizable()
                             .aspectRatio(contentMode: .fit)
                             .frame(width: 200, height: 200)
                     }
-
-                 
                     HStack {
                         Spacer()
                         Picker("Role", selection: $selectedRole) {
@@ -136,8 +266,6 @@ struct ContentView: View {
                         .frame(width: 140)
                     }
                     .padding(.horizontal, 32)
-
-            
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Email")
                             .font(.subheadline).bold()
@@ -150,8 +278,6 @@ struct ContentView: View {
                             .cornerRadius(6)
                     }
                     .padding(.horizontal, 32)
-
-            
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Password")
                             .font(.subheadline).bold()
@@ -172,8 +298,6 @@ struct ContentView: View {
                         .cornerRadius(6)
                     }
                     .padding(.horizontal, 32)
-
-        
                     Button(action: {
                         authVM.signIn(email: email, password: password) { success in
                             if success {
@@ -199,15 +323,12 @@ struct ContentView: View {
                         }
                     }
                     .padding(.horizontal, 32)
-
                     if let error = authVM.errorMessage {
                         Text(error)
                             .foregroundColor(.red)
                             .font(.footnote)
                             .padding(.horizontal, 32)
                     }
-
-    
                     if selectedRole != .organizer {
                         HStack {
                             Button(action: {
@@ -251,7 +372,6 @@ struct ContentView: View {
                     if selectedRole == .organizer {
                         AdminHomeView()
                     } else {
-               
                         Text("Welcome!")
                     }
                 }
@@ -387,7 +507,7 @@ struct SignUpView: View {
 
         
             Button(action: {
-                authVM.signUp(email: email, password: password) { success in
+                authVM.signUp(email: email, password: password, role: selectedRole.rawValue) { success in
                     if success {
                         showSuccess = true
                     }
@@ -705,6 +825,16 @@ struct CreateEventView: View {
                     description: eventDescription,
                     maxVisitors: maxVisitors
                 )
+                let eventDict: [String: Any] = [
+                    "title": newEvent.title,
+                    "description": newEvent.description,
+                    "bannerImageUrl": "",
+                    "eventDate": Date().timeIntervalSince1970,
+                    "eventId": newEvent.id.uuidString,
+                    "maxArtists": Int(newEvent.maxVisitors) ?? 0,
+                    "time": newEvent.time
+                ]
+                Database.database().reference().child("events").child(newEvent.id.uuidString).setValue(eventDict)
                 onCreate?(newEvent)
                 presentationMode.wrappedValue.dismiss()
             }) {
