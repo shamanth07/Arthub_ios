@@ -1,677 +1,403 @@
-//
-//  ContentView.swift
-//  ArtHub
-//
-//  Created by User on 2025-04-27.
-//
-
 import SwiftUI
-import PhotosUI
-import FirebaseAuth
 import FirebaseDatabase
+import PhotosUI
+import FirebaseStorage
 
-class AuthViewModel: ObservableObject {
-    @Published var isLoading = false
-    @Published var errorMessage: String?
+struct ContentView: View {
+    @StateObject private var authVM = AuthViewModel()
+    @State private var showSplash = true
+    @State private var showSignUp = false
+    @State private var showForgot = false
+    @State private var selectedRole = "Visitor"
+    @State private var email = ""
+    @State private var password = ""
     
-    func signIn(email: String, password: String, completion: @escaping (Bool) -> Void) {
-        isLoading = true
-        errorMessage = nil
-        
-        Auth.auth().signIn(withEmail: email, password: password) { [weak self] result, error in
-            DispatchQueue.main.async {
-                self?.isLoading = false
-                
-                if let error = error {
-                    self?.errorMessage = error.localizedDescription
-                    completion(false)
-                    return
-                }
-                
-                completion(true)
+    var body: some View {
+        ZStack {
+            if showSplash {
+                SplashScreen()
+                    .onAppear {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                            withAnimation { showSplash = false }
+                        }
+                    }
+            } else if authVM.user == nil {
+                LoginView(authVM: authVM, showSignUp: $showSignUp, showForgot: $showForgot)
+                    .sheet(isPresented: $showSignUp) {
+                        RegisterView(authVM: authVM, isPresented: $showSignUp)
+                    }
+                    .sheet(isPresented: $showForgot) {
+                        ForgotPasswordView(authVM: authVM)
+                    }
+            } else if authVM.user != nil && authVM.role.isEmpty {
+                ProgressView("Loading...")
+            } else if authVM.role.lowercased() == "admin" {
+                AdminEventListView().environmentObject(authVM)
+            } else {
+                MainAppView(authVM: authVM)
             }
         }
-    }
-    
-    func signUp(email: String, password: String, role: String = "Visitor", completion: @escaping (Bool) -> Void) {
-        isLoading = true
-        errorMessage = nil
-        
-        Auth.auth().createUser(withEmail: email, password: password) { [weak self] result, error in
-            DispatchQueue.main.async {
-                self?.isLoading = false
-                
-                if let error = error {
-                    self?.errorMessage = error.localizedDescription
-                    completion(false)
-                    return
-                }
-                
-                if let uid = result?.user.uid {
-                    let userDict: [String: Any] = [
-                        "email": email,
-                        "role": role
-                    ]
-                    Database.database().reference().child("users").child(uid).setValue(userDict)
-                }
-                
-                completion(true)
-            }
+        .onAppear {
+            print("User: \(authVM.user?.email ?? "none"), Role: \(authVM.role)")
         }
     }
-    
-    func resetPassword(email: String, completion: @escaping (Bool) -> Void) {
-        isLoading = true
-        errorMessage = nil
-        
-        Auth.auth().sendPasswordReset(withEmail: email) { [weak self] error in
-            DispatchQueue.main.async {
-                self?.isLoading = false
-                
-                if let error = error {
-                    self?.errorMessage = error.localizedDescription
-                    completion(false)
-                    return
-                }
-                
-                completion(true)
-            }
-        }
-    }
-    
-    func signOut() throws {
-        try Auth.auth().signOut()
-    }
-}
-
-enum DataTab: String, CaseIterable {
-    case events = "Events"
-    case admins = "Admins"
-    case users = "Users"
-}
-
-class DatabaseManager: ObservableObject {
-    @Published var admins: [Admin] = []
-    @Published var users: [User] = []
-    @Published var events: [Event] = []
-    private var ref: DatabaseReference!
-    
-    init() {
-        ref = Database.database().reference()
-    }
-    
-    func fetchAdmins() {
-        ref.child("admin").observeSingleEvent(of: .value) { snapshot in
-            var fetched: [Admin] = []
-            for child in snapshot.children {
-                if let snap = child as? DataSnapshot,
-                   let dict = snap.value as? [String: Any],
-                   let email = dict["email"] as? String,
-                   let password = dict["password"] as? String,
-                   let role = dict["role"] as? String {
-                    fetched.append(Admin(email: email, password: password, role: role))
-                }
-            }
-            DispatchQueue.main.async {
-                self.admins = fetched
-            }
-        }
-    }
-    
-    func fetchUsers() {
-        ref.child("users").observeSingleEvent(of: .value) { snapshot in
-            var fetched: [User] = []
-            for child in snapshot.children {
-                if let snap = child as? DataSnapshot,
-                   let dict = snap.value as? [String: Any],
-                   let email = dict["email"] as? String,
-                   let password = dict["password"] as? String,
-                   let role = dict["role"] as? String {
-                    fetched.append(User(email: email, password: password, role: role))
-                }
-            }
-            DispatchQueue.main.async {
-                self.users = fetched
-            }
-        }
-    }
-    
-    func fetchEvents() {
-        ref.child("events").observeSingleEvent(of: .value) { snapshot in
-            var fetched: [Event] = []
-            for child in snapshot.children {
-                if let snap = child as? DataSnapshot,
-                   let dict = snap.value as? [String: Any],
-                   let title = dict["title"] as? String,
-                   let description = dict["description"] as? String,
-                   let bannerImageUrl = dict["bannerImageUrl"] as? String,
-                   let eventDate = dict["eventDate"] as? Double,
-                   let eventId = dict["eventId"] as? String,
-                   let maxArtists = dict["maxArtists"] as? Int,
-                   let time = dict["time"] as? String {
-                    fetched.append(Event(title: title, description: description, bannerImageUrl: bannerImageUrl, eventDate: eventDate, eventId: eventId, maxArtists: maxArtists, time: time))
-                }
-            }
-            DispatchQueue.main.async {
-                self.events = fetched
-            }
-        }
-    }
-    
-    func addEvent(_ event: Event) {
-        let eventDict: [String: Any] = [
-            "title": event.title,
-            "description": event.description,
-            "bannerImageUrl": event.bannerImageUrl,
-            "eventDate": event.eventDate,
-            "eventId": event.eventId,
-            "maxArtists": event.maxArtists,
-            "time": event.time
-        ]
-        ref.child("events").child(event.eventId).setValue(eventDict)
-    }
-    
-    func addUser(_ user: User) {
-        let userDict: [String: Any] = [
-            "email": user.email,
-            "password": user.password,
-            "role": user.role
-        ]
-        ref.child("users").childByAutoId().setValue(userDict)
-    }
-}
-
-struct Admin: Identifiable {
-    let id = UUID()
-    let email: String
-    let password: String
-    let role: String
-}
-
-struct User: Identifiable {
-    let id = UUID()
-    let email: String
-    let password: String
-    let role: String
-}
-
-struct Event: Identifiable {
-    let id = UUID()
-    let title: String
-    let description: String
-    let bannerImageUrl: String
-    let eventDate: Double
-    let eventId: String
-    let maxArtists: Int
-    let time: String
 }
 
 struct SplashScreen: View {
     var body: some View {
         ZStack {
             Color.white.ignoresSafeArea()
-            VStack(spacing: 16) {
+            VStack {
                 Image("arthub_logo")
                     .resizable()
                     .aspectRatio(contentMode: .fit)
-                    .frame(width: 300, height: 300)
+                    .frame(width: 250, height: 250)
             }
         }
     }
 }
 
-struct ContentView: View {
-    @StateObject private var authVM = AuthViewModel()
-    @StateObject private var dbManager = DatabaseManager()
-    @State private var selectedTab: DataTab = .events
-    @State private var email: String = ""
-    @State private var password: String = ""
-    @State private var isPasswordVisible: Bool = false
-    @State private var selectedRole: UserRole = .visitor
-    @State private var showHome = false
-    @State private var showSignUp = false
-    @State private var showSplash = true
-    @State private var showForgotPassword = false
-    @State private var forgotEmail: String = ""
-    @State private var forgotConfirmation: Bool = false
-
-    var body: some View {
-        ZStack {
-            if showSplash {
-                SplashScreen()
-                    .onAppear {
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
-                            withAnimation {
-                                showSplash = false
-                            }
-                        }
-                    }
-            } else {
-                VStack(spacing: 32) {
-                    Spacer()
-                    VStack(spacing: 8) {
-                        Image("arthub_logo")
-                            .resizable()
-                            .aspectRatio(contentMode: .fit)
-                            .frame(width: 200, height: 200)
-                    }
-                    HStack {
-                        Spacer()
-                        Picker("Role", selection: $selectedRole) {
-                            ForEach(UserRole.allCases, id: \..self) { role in
-                                Text(role.displayName).tag(role)
-                            }
-                        }
-                        .pickerStyle(MenuPickerStyle())
-                        .frame(width: 140)
-                    }
-                    .padding(.horizontal, 32)
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Email")
-                            .font(.subheadline).bold()
-                        TextField("example@email.com", text: $email)
-                            .keyboardType(.emailAddress)
-                            .autocapitalization(.none)
-                            .padding(.vertical, 8)
-                            .padding(.horizontal, 4)
-                            .background(Color(.systemGray6))
-                            .cornerRadius(6)
-                    }
-                    .padding(.horizontal, 32)
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Password")
-                            .font(.subheadline).bold()
-                        HStack {
-                            if isPasswordVisible {
-                                TextField("Password", text: $password)
-                            } else {
-                                SecureField("Password", text: $password)
-                            }
-                            Button(action: { isPasswordVisible.toggle() }) {
-                                Image(systemName: isPasswordVisible ? "eye.slash" : "eye")
-                                    .foregroundColor(.gray)
-                            }
-                        }
-                        .padding(.vertical, 8)
-                        .padding(.horizontal, 4)
-                        .background(Color(.systemGray6))
-                        .cornerRadius(6)
-                    }
-                    .padding(.horizontal, 32)
-                    Button(action: {
-                        authVM.signIn(email: email, password: password) { success in
-                            if success {
-                                showHome = true
-                            }
-                        }
-                    }) {
-                        if authVM.isLoading {
-                            ProgressView()
-                                .frame(maxWidth: .infinity)
-                                .padding()
-                                .background(Color.black)
-                                .cornerRadius(8)
-                        } else {
-                            Text("Sign in")
-                                .font(.headline)
-                                .foregroundColor(.white)
-                                .frame(maxWidth: .infinity)
-                                .padding()
-                                .background(Color.black)
-                                .cornerRadius(8)
-                                .shadow(color: Color.red.opacity(0.1), radius: 4, x: 0, y: 2)
-                        }
-                    }
-                    .padding(.horizontal, 32)
-                    if let error = authVM.errorMessage {
-                        Text(error)
-                            .foregroundColor(.red)
-                            .font(.footnote)
-                            .padding(.horizontal, 32)
-                    }
-                    if selectedRole != .organizer {
-                        HStack {
-                            Button(action: {
-                                showForgotPassword = true
-                            }) {
-                                Text("Forgot Password?")
-                                    .font(.footnote)
-                                    .foregroundColor(.gray)
-                            }
-                            Spacer()
-                            Button(action: {
-                                showSignUp = true
-                            }) {
-                                Text("Sign Up")
-                                    .font(.footnote)
-                                    .foregroundColor(.red)
-                                    .bold()
-                            }
-                        }
-                        .padding(.horizontal, 32)
-                    } else {
-                        HStack {
-                            Button(action: {
-                                showForgotPassword = true
-                            }) {
-                                Text("Forgot Password?")
-                                    .font(.footnote)
-                                    .foregroundColor(.gray)
-                            }
-                            Spacer()
-                        }
-                        .padding(.horizontal, 32)
-                    }
-                    Spacer()
-                }
-                .background(Color.white.ignoresSafeArea())
-                .fullScreenCover(isPresented: $showSignUp) {
-                    SignUpView(authVM: authVM, onSignIn: { showSignUp = false })
-                }
-                .fullScreenCover(isPresented: $showHome) {
-                    if selectedRole == .organizer {
-                        AdminHomeView()
-                    } else {
-                        Text("Welcome!")
-                    }
-                }
-                .sheet(isPresented: $showForgotPassword) {
-                    VStack(spacing: 24) {
-                        Text("Reset Password")
-                            .font(.headline)
-                        TextField("Enter your email", text: $forgotEmail)
-                            .keyboardType(.emailAddress)
-                            .autocapitalization(.none)
-                            .padding()
-                            .background(Color(.systemGray6))
-                            .cornerRadius(8)
-                            .padding(.horizontal)
-                        if let error = authVM.errorMessage {
-                            Text(error)
-                                .foregroundColor(.red)
-                                .font(.footnote)
-                        }
-                        Button(authVM.isLoading ? "Sending..." : "Send Reset Link") {
-                            authVM.resetPassword(email: forgotEmail) { success in
-                                if success {
-                                    forgotConfirmation = true
-                                    showForgotPassword = false
-                                    forgotEmail = ""
-                                }
-                            }
-                        }
-                        .frame(maxWidth: .infinity)
-                        .padding()
-                        .background(Color.black)
-                        .foregroundColor(.white)
-                        .cornerRadius(8)
-                        .padding(.horizontal)
-                        .disabled(authVM.isLoading)
-                        Button("Cancel") {
-                            showForgotPassword = false
-                        }
-                        .foregroundColor(.red)
-                    }
-                    .padding()
-                    .presentationDetents([.medium])
-                }
-                .alert(isPresented: $forgotConfirmation) {
-                    Alert(title: Text("Reset Link Sent"), message: Text("If an account exists for that email, a reset link will be sent."), dismissButton: .default(Text("OK")))
-                }
-            }
-        }
-    }
-}
-
-struct SignUpView: View {
+struct LoginView: View {
     @ObservedObject var authVM: AuthViewModel
-    @State private var email: String = ""
-    @State private var password: String = ""
-    @State private var selectedRole: UserRole = .artist
-    @State private var agreedToTerms: Bool = false
-    var onSignIn: (() -> Void)? = nil
-    @State private var showSuccess: Bool = false
-
+    @Binding var showSignUp: Bool
+    @Binding var showForgot: Bool
+    @State private var selectedRole = "Visitor"
+    @State private var email = ""
+    @State private var password = ""
     var body: some View {
         VStack(spacing: 32) {
             Spacer()
-          
-            VStack(spacing: 8) {
-                Image("arthub_logo")
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .frame(width: 200, height: 200)
+            Image("arthub_logo")
+                .resizable()
+                .frame(width: 150, height: 150)
+                .padding(.bottom, 8)
+            Text("ARTHUB").font(.title2).fontWeight(.bold)
+            Picker("Role", selection: $selectedRole) {
+                Text("Visitor").tag("Visitor")
+                Text("Artist").tag("Artist")
+                Text("Admin").tag("Admin")
             }
-
-        
-            HStack {
-                Spacer()
-                Picker("Role", selection: $selectedRole) {
-                    ForEach(UserRole.allCases.filter { $0 != .organizer }, id: \..self) { role in
-                        Text(role.displayName).tag(role)
-                    }
+            .pickerStyle(.menu)
+            .frame(maxWidth: 200)
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Email").fontWeight(.semibold)
+                TextField("example@email.com", text: $email)
+                    .textFieldStyle(.roundedBorder)
+                Text("Password").fontWeight(.semibold)
+                HStack {
+                    SecureField("Password", text: $password)
+                        .textFieldStyle(.roundedBorder)
                 }
-                .pickerStyle(MenuPickerStyle())
-                .frame(width: 140)
             }
-            .padding(.horizontal, 32)
-
-          
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Email")
-                    .font(.subheadline).bold()
-                TextField("Your email address", text: $email)
-                    .keyboardType(.emailAddress)
-                    .autocapitalization(.none)
-                    .padding(.vertical, 8)
-                    .padding(.horizontal, 4)
-                    .background(Color(.systemGray6))
-                    .cornerRadius(6)
-            }
-            .padding(.horizontal, 32)
-
-    
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Password")
-                    .font(.subheadline).bold()
-                SecureField("Your password", text: $password)
-                    .padding(.vertical, 8)
-                    .padding(.horizontal, 4)
-                    .background(Color(.systemGray6))
-                    .cornerRadius(6)
-            }
-            .padding(.horizontal, 32)
-
-    
-            HStack(alignment: .top) {
-                Button(action: { agreedToTerms.toggle() }) {
-                    Image(systemName: agreedToTerms ? "checkmark.square.fill" : "square")
-                        .foregroundColor(.red)
-                }
-                .buttonStyle(PlainButtonStyle())
-                Text("I agree to the ") +
-                Text("Terms of Services").foregroundColor(.red).bold() +
-                Text(" and ") +
-                Text("Privacy Policy.").foregroundColor(.red).bold()
-            }
-            .font(.footnote)
-            .padding(.horizontal, 32)
-
-
-            if let error = authVM.errorMessage {
-                Text(error)
-                    .foregroundColor(.red)
-                    .font(.footnote)
-                    .padding(.horizontal, 32)
-            }
-
-        
             Button(action: {
-                authVM.signUp(email: email, password: password, role: selectedRole.rawValue) { success in
-                    if success {
-                        showSuccess = true
-                    }
-                }
+                authVM.signIn(email: email, password: password, role: selectedRole) { _ in }
             }) {
-                if authVM.isLoading {
-                    ProgressView()
-                        .frame(maxWidth: .infinity)
-                        .padding()
-                        .background(Color.black)
-                        .cornerRadius(8)
-                } else {
-                    Text("Sign Up")
-                        .font(.headline)
-                        .foregroundColor(.white)
-                        .frame(maxWidth: .infinity)
-                        .padding()
-                        .background(agreedToTerms ? Color.black : Color.gray)
-                        .cornerRadius(8)
-                        .shadow(color: Color.red.opacity(0.1), radius: 4, x: 0, y: 2)
-                }
+                Text("Sign in")
+                    .frame(maxWidth: .infinity)
+                    .padding()
+                    .background(Color.black)
+                    .foregroundColor(.white)
+                    .cornerRadius(8)
+                    .shadow(color: .red.opacity(0.1), radius: 4, x: 0, y: 2)
             }
-            .padding(.horizontal, 32)
-            .disabled(!agreedToTerms || authVM.isLoading)
-            .alert(isPresented: $showSuccess) {
-                Alert(title: Text("Sign Up Successful"), message: Text("You can now sign in with your new account."), dismissButton: .default(Text("OK"), action: {
-                    onSignIn?()
-                }))
+            if let error = authVM.errorMessage {
+                Text(error).foregroundColor(.red).font(.footnote)
             }
-
-    
             HStack {
-                Text("Have an Account?")
+                Button("Forgot Password?") { showForgot = true }
                     .font(.footnote)
                     .foregroundColor(.gray)
-                Button(action: {
-                    onSignIn?()
-                }) {
-                    Text("Sign In")
-                        .font(.footnote)
-                        .foregroundColor(.red)
-                        .bold()
-                }
+                Spacer()
+                Button("Sign Up") { showSignUp = true }
+                    .font(.footnote)
+                    .foregroundColor(.red)
             }
-            .padding(.horizontal, 32)
             Spacer()
         }
-        .background(Color.white.ignoresSafeArea())
+        .padding()
     }
 }
 
-struct AdminHomeView: View {
-    struct Event: Identifiable {
-        let id: UUID
-        var title: String
-        var date: String
-        var time: String
-        var image: UIImage?
-        var description: String
-        var maxVisitors: String
-    }
-
-    @State private var events: [Event] = [
-        Event(id: UUID(), title: "Moder Art Export Aug 15", date: "2025 - 16:00", time: "", image: nil, description: "", maxVisitors: ""),
-        Event(id: UUID(), title: "Photography Exhibit Sep 4", date: "2025 - 17:00", time: "", image: nil, description: "", maxVisitors: "")
-    ]
-    @State private var showCreateEvent = false
-    @State private var editingEvent: Event? = nil
-    @State private var eventToDelete: Event? = nil
-    @State private var showDeleteAlert = false
-
+struct RegisterView: View {
+    @ObservedObject var authVM: AuthViewModel
+    @Binding var isPresented: Bool
+    @State private var email = ""
+    @State private var password = ""
+    @State private var selectedRole = "Artist"
+    @State private var agreed = false
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-        
-            HStack {
-                Image(systemName: "line.horizontal.3")
-                    .font(.title2)
-                    .padding(.leading)
-                Spacer()
-                Text("Organizer")
-                    .font(.title)
-                    .fontWeight(.semibold)
-                Spacer()
+        VStack(spacing: 24) {
+            Image("arthub_logo")
+                .resizable()
+                .frame(width: 80, height: 80)
+                .padding(.bottom, 8)
+            Text("ARTHUB").font(.title2).fontWeight(.bold)
+            Picker("Role", selection: $selectedRole) {
+                Text("Artist").tag("Artist")
+                Text("Visitor").tag("Visitor")
             }
-            .padding(.top)
-
-
+            .pickerStyle(.menu)
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Email").fontWeight(.semibold)
+                TextField("Your email address", text: $email)
+                    .textFieldStyle(.roundedBorder)
+                Text("Password").fontWeight(.semibold)
+                SecureField("Your password", text: $password)
+                    .textFieldStyle(.roundedBorder)
+            }
+            HStack(alignment: .top) {
+                Button(action: { agreed.toggle() }) {
+                    Image(systemName: agreed ? "checkmark.square.fill" : "square")
+                        .foregroundColor(.red)
+                }
+                Text("I agree to the ") +
+                Text("Terms of Services").foregroundColor(.red) +
+                Text(" and ") +
+                Text("Privacy Policy.").foregroundColor(.red)
+            }
+            .font(.footnote)
             Button(action: {
-                showCreateEvent = true
+                guard agreed else { return }
+                authVM.signUp(email: email, password: password, role: selectedRole) { success in
+                    if success { isPresented = false }
+                }
             }) {
-                Text("Create Event")
-                    .font(.headline)
+                Text("Sign Up")
+                    .frame(maxWidth: .infinity)
+                    .padding()
+                    .background(Color.black)
+                    .foregroundColor(.white)
+                    .cornerRadius(8)
+            }
+            .disabled(!agreed)
+            if let error = authVM.errorMessage {
+                Text(error).foregroundColor(.red).font(.footnote)
+            }
+            Spacer()
+            HStack {
+                Text("Have an Account?")
+                Button("Sign In") { isPresented = false }
+                    .foregroundColor(.red)
+            }
+            .font(.footnote)
+        }
+        .padding()
+    }
+}
+
+struct ForgotPasswordView: View {
+    @ObservedObject var authVM: AuthViewModel
+    @Environment(\.dismiss) var dismiss
+    @State private var email = ""
+    @State private var message: String?
+    var body: some View {
+        VStack(spacing: 24) {
+            Text("Reset Password").font(.headline)
+            TextField("Enter your email", text: $email)
+                .textFieldStyle(.roundedBorder)
+            Button("Send Reset Link") {
+                authVM.resetPassword(email: email) { success in
+                    message = success ? "Check your email for a reset link." : (authVM.errorMessage ?? "Error")
+                }
+            }
+            if let message = message {
+                Text(message).foregroundColor(.blue)
+            }
+            Spacer()
+            Button("Back") { dismiss() }
+                .foregroundColor(.red)
+        }
+        .padding()
+    }
+}
+
+struct MainAppView: View {
+    @ObservedObject var authVM: AuthViewModel
+    @State private var selectedTab = 0
+    var body: some View {
+        TabView(selection: $selectedTab) {
+            ArtworkFeedView()
+                .tabItem {
+                    Image(systemName: "house")
+                    Text("Feed")
+                }.tag(0)
+            ArtworkUploadView()
+                .tabItem {
+                    Image(systemName: "plus.square")
+                    Text("Upload")
+                }.tag(1)
+            AccountView(authVM: authVM)
+                .tabItem {
+                    Image(systemName: "person")
+                    Text("Account")
+                }.tag(2)
+        }
+    }
+}
+
+struct Event: Identifiable {
+    let id: String
+    var title: String
+    var description: String
+    var date: Date
+    var time: String
+    var location: String
+    var price: String
+    var maxVisitors: Int
+    var bannerImageUrl: String?
+}
+
+struct EventDetailsView: View {
+    let event: Event
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 16) {
+                Rectangle().fill(Color(.systemGray5)).frame(height: 160)
+                    .overlay(Text("Banner Image"))
+                Text(event.title).font(.title).bold()
+                Text("Description : \(event.description)")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Text("Date : \(event.date.formatted(date: .long, time: .omitted))")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Text("Time : \(event.time)")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Text("Location : \(event.location)")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Text("price : \(event.price)$")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Text("Maximum visitors allowed : \(event.maxVisitors).")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Button("confirm the event") {}
                     .frame(maxWidth: .infinity)
                     .padding()
                     .background(Color(.systemGray5))
-                    .cornerRadius(4)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 4)
-                            .stroke(Color.gray, lineWidth: 1)
-                    )
+                    .cornerRadius(8)
             }
-            .padding(.horizontal)
-            .sheet(isPresented: $showCreateEvent) {
-                CreateEventView { newEvent in
-                    events.insert(newEvent, at: 0)
-                }
-            }
-            .sheet(item: $editingEvent) { event in
-                EditEventView(event: event) { updatedEvent in
-                    if let idx = events.firstIndex(where: { $0.id == updatedEvent.id }) {
-                        events[idx] = updatedEvent
+            .padding()
+        }
+    }
+}
+
+struct AdminEventListView: View {
+    @State private var events: [Event] = []
+    @State private var showCreate = false
+    @State private var selectedEvent: Event? = nil
+    @State private var editingEvent: Event? = nil
+    @State private var showEditSheet = false
+    @State private var eventToDelete: Event? = nil
+    @State private var showDeleteAlert = false
+    @State private var showAccount = false
+    @EnvironmentObject var authVM: AuthViewModel
+    
+    var body: some View {
+        NavigationStack {
+            VStack(alignment: .leading) {
+                HStack {
+                    Button(action: { showAccount = true }) {
+                        Image(systemName: "line.horizontal.3")
+                            .font(.title2)
+                    }
+                    Spacer()
+                    Text("Admin")
+                        .font(.title)
+                        .fontWeight(.semibold)
+                    Spacer()
+                    Button(action: {
+                        print("Manual refresh triggered")
+                        fetchEventsFromFirebase { loaded in
+                            print("Events loaded on manual refresh: \(loaded.count)")
+                            events = loaded
+                        }
+                    }) {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.title2)
                     }
                 }
-            }
-
-            Text("Created Events")
-                .font(.subheadline)
-                .padding(.horizontal)
-
-            ScrollView {
-                VStack(spacing: 16) {
-                    ForEach(events) { event in
-                        VStack(alignment: .leading, spacing: 8) {
-                            HStack {
-                                if let image = event.image {
-                                    Image(uiImage: image)
-                                        .resizable()
-                                        .aspectRatio(contentMode: .fill)
+                .padding(.top)
+                .sheet(isPresented: $showAccount) {
+                    AdminAccountPage(
+                        adminName: authVM.user?.email?.components(separatedBy: "@").first ?? "Admin",
+                        adminEmail: authVM.user?.email ?? "admin@email.com",
+                        onLogout: {
+                            authVM.signOut()
+                            showAccount = false
+                        }
+                    )
+                    .environmentObject(authVM)
+                }
+                Button("Create Event") { showCreate = true }
+                    .frame(maxWidth: .infinity)
+                    .padding()
+                    .background(Color(.systemGray5))
+                    .cornerRadius(8)
+                Text("Created Events").font(.headline).padding(.top)
+                ScrollView {
+                    VStack(spacing: 16) {
+                        ForEach(events) { event in
+                            VStack(alignment: .leading, spacing: 8) {
+                                HStack {
+                                    if let urlStr = event.bannerImageUrl, let url = URL(string: urlStr), !urlStr.isEmpty {
+                                        AsyncImage(url: url) { image in
+                                            image.resizable().aspectRatio(contentMode: .fill)
+                                        } placeholder: {
+                                            Rectangle().fill(Color(.systemGray5))
+                                        }
                                         .frame(width: 40, height: 40)
                                         .clipShape(RoundedRectangle(cornerRadius: 6))
+                                    } else {
+                                        Rectangle().fill(Color(.systemGray5))
+                                            .frame(width: 40, height: 40)
+                                            .clipShape(RoundedRectangle(cornerRadius: 6))
+                                    }
+                                    Text(event.title).font(.headline)
+                                    Spacer()
+                                    Button(action: { selectedEvent = event }) {
+                                        Image(systemName: "chevron.right")
+                                    }
                                 }
-                                Text(event.title)
-                                    .font(.headline)
-                                Spacer()
-                                Button(action: {
-                                    eventToDelete = event
-                                    showDeleteAlert = true
-                                }) {
-                                    Image(systemName: "trash")
-                                        .foregroundColor(.red)
-                                }
-                                .padding(.trailing, 4)
-                                Button(action: {
-                                    editingEvent = event
-                                }) {
-                                    Text("Edit")
-                                        .font(.subheadline)
-                                        .frame(width: 80, height: 32)
-                                        .background(Color(.systemGray5))
-                                        .cornerRadius(4)
-                                        .overlay(
-                                            RoundedRectangle(cornerRadius: 4)
-                                                .stroke(Color.gray, lineWidth: 1)
-                                        )
-                                }
-                                Image(systemName: "chevron.right")
+                                Text("\(event.date.formatted(date: .long, time: .shortened)) - \(event.time)")
+                                    .font(.subheadline)
                                     .foregroundColor(.gray)
+                                HStack {
+                                    Button("Edit") {
+                                        editingEvent = event
+                                        showEditSheet = true
+                                    }
+                                    .buttonStyle(.bordered)
+                                    Button(action: {
+                                        eventToDelete = event
+                                        showDeleteAlert = true
+                                    }) {
+                                        Image(systemName: "trash").foregroundColor(.red)
+                                    }
+                                }
+                                Divider()
                             }
-                            Text(event.date)
-                                .font(.subheadline)
-                                .foregroundColor(.gray)
-                            Divider()
                         }
-                        .padding(.horizontal)
+                    }
+                }
+                Spacer()
+            }
+            .padding()
+            .navigationTitle("")
+            .sheet(isPresented: $showCreate) {
+                EventCreationView(onCreate: { newEvent in
+                    events.append(newEvent)
+                    saveEventToFirebase(newEvent)
+                })
+            }
+            .sheet(item: $selectedEvent) { event in
+                EventDetailsView(event: event)
+            }
+            .sheet(isPresented: $showEditSheet, onDismiss: {
+                editingEvent = nil
+            }) {
+                if let event = editingEvent {
+                    EditEventView(event: event) { updatedEvent in
+                        if let idx = events.firstIndex(where: { $0.id == updatedEvent.id }) {
+                            events[idx] = updatedEvent
+                            updateEventInFirebase(updatedEvent)
+                        }
                     }
                 }
             }
@@ -680,220 +406,260 @@ struct AdminHomeView: View {
                     title: Text("Delete Event"),
                     message: Text("Are you sure you want to delete this event?"),
                     primaryButton: .destructive(Text("Delete")) {
-                        if let event = eventToDelete {
-                            events.removeAll { $0.id == event.id }
+                        if let eventToDelete = eventToDelete {
+                            events.removeAll { $0.id == eventToDelete.id }
+                            deleteEventFromFirebase(eventToDelete)
                         }
-                        eventToDelete = nil
                     },
-                    secondaryButton: .cancel {
-                        eventToDelete = nil
-                    }
+                    secondaryButton: .cancel()
                 )
             }
-            Spacer()
+            .onAppear {
+                fetchEventsFromFirebase { loaded in
+                    events = loaded
+                }
+            }
         }
     }
-}
-
-struct CreateEventView: View {
-    @Environment(\.presentationMode) var presentationMode
-    @State private var eventName: String = ""
-    @State private var eventDescription: String = ""
-    @State private var eventDate: Date = Date()
-    @State private var eventTime: String = ""
-    @State private var maxVisitors: String = ""
-    @State private var showImagePicker = false
-    @State private var eventImage: UIImage? = nil
-    @State private var photoItem: PhotosPickerItem? = nil
-
-    var onCreate: ((AdminHomeView.Event) -> Void)?
-
-    var isFormValid: Bool {
-        eventImage != nil &&
-        !eventName.trimmingCharacters(in: .whitespaces).isEmpty &&
-        !eventDescription.trimmingCharacters(in: .whitespaces).isEmpty &&
-        !eventTime.trimmingCharacters(in: .whitespaces).isEmpty &&
-        !maxVisitors.trimmingCharacters(in: .whitespaces).isEmpty
-    }
-
-    var body: some View {
-        VStack(spacing: 16) {
-            // Navigation Bar
-            HStack {
-                Button(action: { presentationMode.wrappedValue.dismiss() }) {
-                    Image(systemName: "chevron.left")
-                        .font(.title2)
-                        .foregroundColor(.black)
-                }
-                Spacer()
-                Text("Create Event")
-                    .font(.title2)
-                    .fontWeight(.semibold)
-                Spacer()
-            }
-            .padding(.horizontal)
-            .padding(.top)
-
-
-            PhotosPicker(selection: $photoItem, matching: .images, photoLibrary: .shared()) {
-                if let eventImage = eventImage {
-                    Image(uiImage: eventImage)
-                        .resizable()
-                        .aspectRatio(contentMode: .fill)
-                        .frame(height: 120)
-                        .clipped()
-                } else {
-                    Rectangle()
-                        .fill(Color(.systemGray5))
-                        .frame(height: 120)
-                        .overlay(
-                            Image(systemName: "photo")
-                                .font(.largeTitle)
-                                .foregroundColor(.gray)
+    func fetchEventsFromFirebase(completion: @escaping ([Event]) -> Void) {
+        let ref = Database.database().reference()
+        print("Fetching events from Firebase...")
+        ref.child("events").observe(.value) { snapshot in
+            print("Firebase snapshot received: \(snapshot.exists())")
+            print("Number of children: \(snapshot.childrenCount)")
+            
+            var loaded: [Event] = []
+            for child in snapshot.children {
+                if let snap = child as? DataSnapshot {
+                    print("Processing event with key: \(snap.key)")
+                    print("Event data: \(snap.value ?? "nil")")
+                    
+                    if let dict = snap.value as? [String: Any],
+                       let title = dict["title"] as? String,
+                       let description = dict["description"] as? String,
+                       let dateInterval = dict["date"] as? TimeInterval,
+                       let time = dict["time"] as? String,
+                       let location = dict["location"] as? String,
+                       let price = dict["price"] as? String,
+                       let maxVisitors = dict["maxVisitors"] as? Int {
+                        
+                        let event = Event(
+                            id: snap.key,
+                            title: title,
+                            description: description,
+                            date: Date(timeIntervalSince1970: dateInterval),
+                            time: time,
+                            location: location,
+                            price: price,
+                            maxVisitors: maxVisitors,
+                            bannerImageUrl: dict["bannerImageUrl"] as? String
                         )
-                }
-            }
-            .onChange(of: photoItem) { newItem in
-                if let newItem = newItem {
-                    Task {
-                        if let data = try? await newItem.loadTransferable(type: Data.self),
-                           let uiImage = UIImage(data: data) {
-                            eventImage = uiImage
-                        }
+                        loaded.append(event)
+                        print("Successfully loaded event: \(event.title)")
+                    } else {
+                        print("Failed to parse event data")
                     }
                 }
             }
-            .cornerRadius(4)
-            .padding(.horizontal)
-
-    
-            TextField("Event Name", text: $eventName)
-                .font(.title2)
-                .padding(8)
-                .overlay(RoundedRectangle(cornerRadius: 4).stroke(Color.gray, lineWidth: 1))
-                .padding(.horizontal)
-
-          
-            TextField("Description", text: $eventDescription)
-                .padding(8)
-                .overlay(RoundedRectangle(cornerRadius: 4).stroke(Color.gray, lineWidth: 1))
-                .padding(.horizontal)
-
-        
-            HStack(spacing: 8) {
-                DatePicker("", selection: $eventDate, displayedComponents: .date)
-                    .labelsHidden()
-                    .frame(maxWidth: .infinity)
-                TextField("18:00", text: $eventTime)
-                    .keyboardType(.numbersAndPunctuation)
-                    .padding(8)
-                    .frame(maxWidth: .infinity)
-                    .overlay(RoundedRectangle(cornerRadius: 4).stroke(Color.gray, lineWidth: 1))
+            print("Total events loaded: \(loaded.count)")
+            DispatchQueue.main.async {
+                completion(loaded)
             }
-            .padding(.horizontal)
-
-
-            Rectangle()
-                .fill(Color(.systemGray5))
-                .frame(height: 100)
-                .overlay(
-                    Image(systemName: "mappin.and.ellipse")
-                        .font(.largeTitle)
-                        .foregroundColor(.blue)
-                )
-                .cornerRadius(4)
-                .padding(.horizontal)
-
-     
-            TextField("Maximum Visitors Allowed", text: $maxVisitors)
-                .keyboardType(.numberPad)
-                .padding(8)
-                .overlay(RoundedRectangle(cornerRadius: 4).stroke(Color.gray, lineWidth: 1))
-                .padding(.horizontal)
-
-    
-            Button(action: {
-                let formatter = DateFormatter()
-                formatter.dateFormat = "yyyy-MM-dd"
-                let dateString = formatter.string(from: eventDate)
-                let newEvent = AdminHomeView.Event(
-                    id: UUID(),
-                    title: eventName.isEmpty ? "Untitled Event" : eventName,
-                    date: dateString,
-                    time: eventTime,
-                    image: eventImage,
-                    description: eventDescription,
-                    maxVisitors: maxVisitors
-                )
-                let eventDict: [String: Any] = [
-                    "title": newEvent.title,
-                    "description": newEvent.description,
-                    "bannerImageUrl": "",
-                    "eventDate": Date().timeIntervalSince1970,
-                    "eventId": newEvent.id.uuidString,
-                    "maxArtists": Int(newEvent.maxVisitors) ?? 0,
-                    "time": newEvent.time
-                ]
-                Database.database().reference().child("events").child(newEvent.id.uuidString).setValue(eventDict)
-                onCreate?(newEvent)
-                presentationMode.wrappedValue.dismiss()
-            }) {
-                Text("Create")
-                    .font(.headline)
-                    .frame(maxWidth: .infinity)
-                    .padding()
-                    .background(isFormValid ? Color(.systemGray5) : Color(.systemGray4))
-                    .cornerRadius(4)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 4)
-                            .stroke(Color.gray, lineWidth: 1)
-                    )
-            }
-            .padding(.horizontal)
-            .padding(.top, 8)
-            .disabled(!isFormValid)
-
-            Spacer()
         }
+    }
+    func saveEventToFirebase(_ event: Event) {
+        let ref = Database.database().reference()
+        let eventDict: [String: Any] = [
+            "title": event.title,
+            "description": event.description,
+            "date": event.date.timeIntervalSince1970,
+            "time": event.time,
+            "location": event.location,
+            "price": event.price,
+            "maxVisitors": event.maxVisitors,
+            "bannerImageUrl": event.bannerImageUrl ?? ""
+        ]
+        print("Saving event to Firebase: \(eventDict)")
+        
+        if !event.id.isEmpty {
+            ref.child("events").child(event.id).setValue(eventDict) { error, ref in
+                if let error = error {
+                    print("Error updating event: \(error)")
+                } else {
+                    print("Event updated successfully with ID: \(event.id)")
+                }
+            }
+        } else {
+            ref.child("events").childByAutoId().setValue(eventDict) { error, ref in
+                if let error = error {
+                    print("Error creating event: \(error)")
+                } else {
+                    print("Event created successfully with ID: \(ref.key ?? "unknown")")
+                }
+            }
+        }
+    }
+    func updateEventInFirebase(_ event: Event) {
+        saveEventToFirebase(event)
+    }
+    func deleteEventFromFirebase(_ event: Event) {
+        let ref = Database.database().reference()
+        ref.child("events").child(event.id).removeValue()
     }
 }
 
 struct EditEventView: View {
-    @Environment(\.presentationMode) var presentationMode
-    @State var event: AdminHomeView.Event
+    @Environment(\.dismiss) var dismiss
+    @State private var editedEvent: Event
+    var onSave: (Event) -> Void
+    @State private var bannerImage: UIImage? = nil
     @State private var photoItem: PhotosPickerItem? = nil
-    var onSave: ((AdminHomeView.Event) -> Void)?
-
-    var isFormValid: Bool {
-        event.image != nil &&
-        !event.title.trimmingCharacters(in: .whitespaces).isEmpty &&
-        !event.description.trimmingCharacters(in: .whitespaces).isEmpty &&
-        !event.time.trimmingCharacters(in: .whitespaces).isEmpty &&
-        !event.maxVisitors.trimmingCharacters(in: .whitespaces).isEmpty
+    @State private var isUploading = false
+    @State private var isViewReady = false
+    
+    private var minimumDate: Date {
+        Calendar.current.startOfDay(for: Date())
     }
+    
+    init(event: Event, onSave: @escaping (Event) -> Void) {
+        _editedEvent = State(initialValue: event)
+        self.onSave = onSave
+    }
+    
+    var body: some View {
+        NavigationStack {
+            Group {
+                if isViewReady {
+                    Form {
+                        Section(header: Text("Event Image")) {
+                            PhotosPicker(selection: $photoItem, matching: .images) {
+                                if let image = bannerImage {
+                                    Image(uiImage: image)
+                                        .resizable()
+                                        .aspectRatio(contentMode: .fill)
+                                        .frame(height: 120)
+                                        .clipped()
+                                } else if let urlStr = editedEvent.bannerImageUrl, let url = URL(string: urlStr), !urlStr.isEmpty {
+                                    AsyncImage(url: url) { image in
+                                        image.resizable().aspectRatio(contentMode: .fill)
+                                    } placeholder: {
+                                        Rectangle().fill(Color(.systemGray5))
+                                    }
+                                    .frame(height: 120)
+                                    .clipped()
+                                } else {
+                                    Rectangle()
+                                        .fill(Color(.systemGray5))
+                                        .frame(height: 120)
+                                        .overlay(Text("Banner Image"))
+                                }
+                            }
+                        }
+                        
+                        Section(header: Text("Event Details")) {
+                            TextField("Title", text: $editedEvent.title)
+                            TextField("Description", text: $editedEvent.description)
+                            DatePicker("Date", selection: $editedEvent.date, in: minimumDate..., displayedComponents: .date)
+                            TextField("Time", text: $editedEvent.time)
+                            TextField("Location", text: $editedEvent.location)
+                            TextField("Price", text: $editedEvent.price)
+                            TextField("Maximum Visitors", value: $editedEvent.maxVisitors, formatter: NumberFormatter())
+                        }
+                    }
+                } else {
+                    ProgressView("Loading...")
+                }
+            }
+            .navigationTitle("Edit Event")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button("Cancel") {
+                        dismiss()
+                    }
+                }
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button(isUploading ? "Saving..." : "Save") {
+                        if let image = bannerImage {
+                            isUploading = true
+                            uploadImageAndSaveEvent(image: image)
+                        } else {
+                            saveEvent(imageUrl: editedEvent.bannerImageUrl)
+                        }
+                    }
+                    .disabled(isUploading)
+                }
+            }
+            .onChange(of: photoItem) { newItem in
+                if let newItem = newItem {
+                    Task {
+                        if let data = try? await newItem.loadTransferable(type: Data.self),
+                           let uiImage = UIImage(data: data) {
+                            bannerImage = uiImage
+                        }
+                    }
+                }
+            }
+            .onAppear {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                    isViewReady = true
+                }
+            }
+        }
+    }
+    
+    func uploadImageAndSaveEvent(image: UIImage) {
+        let storageRef = Storage.storage().reference().child("events/\(UUID().uuidString).jpg")
+        guard let imageData = image.jpegData(compressionQuality: 0.8) else { return }
+        
+        storageRef.putData(imageData) { metadata, error in
+            if let error = error {
+                print("Upload error: \(error)")
+                isUploading = false
+                return
+            }
+            
+            storageRef.downloadURL { url, error in
+                isUploading = false
+                if let url = url {
+                    saveEvent(imageUrl: url.absoluteString)
+                }
+            }
+        }
+    }
+    
+    func saveEvent(imageUrl: String?) {
+        var updated = editedEvent
+        updated.bannerImageUrl = imageUrl
+        onSave(updated)
+        dismiss()
+    }
+}
 
+struct EventCreationView: View {
+    var onCreate: (Event) -> Void
+    @Environment(\.dismiss) var dismiss
+    @State private var title = ""
+    @State private var description = ""
+    @State private var date = Date()
+    @State private var time = ""
+    @State private var location = ""
+    @State private var price = ""
+    @State private var maxVisitors = ""
+    @State private var bannerImage: UIImage? = nil
+    @State private var photoItem: PhotosPickerItem? = nil
+    @State private var isUploading = false
+    
+    private var minimumDate: Date {
+        Calendar.current.startOfDay(for: Date())
+    }
+    
     var body: some View {
         VStack(spacing: 16) {
-        
-            HStack {
-                Button(action: { presentationMode.wrappedValue.dismiss() }) {
-                    Image(systemName: "chevron.left")
-                        .font(.title2)
-                        .foregroundColor(.black)
-                }
-                Spacer()
-                Text("Edit Event")
-                    .font(.title2)
-                    .fontWeight(.semibold)
-                Spacer()
-            }
-            .padding(.horizontal)
-            .padding(.top)
-
-     
-            PhotosPicker(selection: $photoItem, matching: .images, photoLibrary: .shared()) {
-                if let eventImage = event.image {
-                    Image(uiImage: eventImage)
+            Text("Create Event").font(.headline)
+            PhotosPicker(selection: $photoItem, matching: .images) {
+                if let image = bannerImage {
+                    Image(uiImage: image)
                         .resizable()
                         .aspectRatio(contentMode: .fill)
                         .frame(height: 120)
@@ -902,11 +668,7 @@ struct EditEventView: View {
                     Rectangle()
                         .fill(Color(.systemGray5))
                         .frame(height: 120)
-                        .overlay(
-                            Image(systemName: "photo")
-                                .font(.largeTitle)
-                                .foregroundColor(.gray)
-                        )
+                        .overlay(Text("Banner Image"))
                 }
             }
             .onChange(of: photoItem) { newItem in
@@ -914,91 +676,634 @@ struct EditEventView: View {
                     Task {
                         if let data = try? await newItem.loadTransferable(type: Data.self),
                            let uiImage = UIImage(data: data) {
-                            event.image = uiImage
+                            bannerImage = uiImage
                         }
                     }
                 }
             }
-            .cornerRadius(4)
-            .padding(.horizontal)
-
-      
-            TextField("Event Name", text: $event.title)
-                .font(.title2)
-                .padding(8)
-                .overlay(RoundedRectangle(cornerRadius: 4).stroke(Color.gray, lineWidth: 1))
-                .padding(.horizontal)
-
-            TextField("Description", text: $event.description)
-                .padding(8)
-                .overlay(RoundedRectangle(cornerRadius: 4).stroke(Color.gray, lineWidth: 1))
-                .padding(.horizontal)
-
-        
-            HStack(spacing: 8) {
-                TextField("Date", text: $event.date)
-                    .padding(8)
-                    .frame(maxWidth: .infinity)
-                    .overlay(RoundedRectangle(cornerRadius: 4).stroke(Color.gray, lineWidth: 1))
-                TextField("18:00", text: $event.time)
-                    .keyboardType(.numbersAndPunctuation)
-                    .padding(8)
-                    .frame(maxWidth: .infinity)
-                    .overlay(RoundedRectangle(cornerRadius: 4).stroke(Color.gray, lineWidth: 1))
+            TextField("Title", text: $title).textFieldStyle(.roundedBorder)
+            TextField("Description", text: $description).textFieldStyle(.roundedBorder)
+            DatePicker("Date", selection: $date, in: minimumDate..., displayedComponents: .date)
+            TextField("Time", text: $time).textFieldStyle(.roundedBorder)
+            TextField("Location", text: $location).textFieldStyle(.roundedBorder)
+            TextField("Price", text: $price).textFieldStyle(.roundedBorder)
+            TextField("Maximum Visitors Allowed", text: $maxVisitors).textFieldStyle(.roundedBorder)
+            Button(isUploading ? "Uploading..." : "Create") {
+                if let image = bannerImage {
+                    isUploading = true
+                    uploadImageAndSaveEvent(image: image)
+                } else {
+                    saveEvent(imageUrl: nil)
+                }
             }
-            .padding(.horizontal)
-
-        
-            Rectangle()
-                .fill(Color(.systemGray5))
-                .frame(height: 100)
-                .overlay(
-                    Image(systemName: "mappin.and.ellipse")
-                        .font(.largeTitle)
-                        .foregroundColor(.blue)
-                )
-                .cornerRadius(4)
-                .padding(.horizontal)
-
-           
-            TextField("Maximum Visitors Allowed", text: $event.maxVisitors)
-                .keyboardType(.numberPad)
-                .padding(8)
-                .overlay(RoundedRectangle(cornerRadius: 4).stroke(Color.gray, lineWidth: 1))
-                .padding(.horizontal)
-
-          
-            Button(action: {
-                onSave?(event)
-                presentationMode.wrappedValue.dismiss()
-            }) {
-                Text("Save")
-                    .font(.headline)
-                    .frame(maxWidth: .infinity)
-        .padding()
-                    .background(isFormValid ? Color(.systemGray5) : Color(.systemGray4))
-                    .cornerRadius(4)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 4)
-                            .stroke(Color.gray, lineWidth: 1)
-                    )
-            }
-            .padding(.horizontal)
-            .padding(.top, 8)
-            .disabled(!isFormValid)
-
+            .frame(maxWidth: .infinity)
+            .padding()
+            .background(Color(.systemGray5))
+            .cornerRadius(8)
+            .disabled(isUploading)
             Spacer()
+        }
+        .padding()
+    }
+    func uploadImageAndSaveEvent(image: UIImage) {
+        let storageRef = Storage.storage().reference().child("events/\(UUID().uuidString).jpg")
+        guard let imageData = image.jpegData(compressionQuality: 0.8) else { return }
+        storageRef.putData(imageData) { metadata, error in
+            if let error = error {
+                print("Upload error: \(error)")
+                isUploading = false
+                return
+            }
+            storageRef.downloadURL { url, error in
+                isUploading = false
+                saveEvent(imageUrl: url?.absoluteString)
+            }
+        }
+    }
+    func saveEvent(imageUrl: String?) {
+        let event = Event(
+            id: "",
+            title: title,
+            description: description,
+            date: date,
+            time: time,
+            location: location,
+            price: price,
+            maxVisitors: Int(maxVisitors) ?? 0,
+            bannerImageUrl: imageUrl
+        )
+        onCreate(event)
+        dismiss()
+    }
+}
+
+struct AccountView: View {
+    @ObservedObject var authVM: AuthViewModel
+    @State private var showAdminEvents = false
+    var body: some View {
+        NavigationStack {
+        VStack(spacing: 16) {
+                Image("arthub_logo")
+                    .resizable()
+                    .frame(width: 60, height: 60)
+                Rectangle()
+                    .fill(Color(.systemGray5))
+                    .frame(width: 80, height: 80)
+                    .overlay(Text("Image").foregroundColor(.gray))
+                Text(authVM.user?.email ?? "User")
+                    .font(.headline)
+                Text("(") + Text(authVM.role.capitalized) + Text(")")
+                    .font(.subheadline)
+                    .foregroundColor(.gray)
+                Divider()
+                if authVM.role.lowercased() == "admin" {
+                    AccountMenuItem(icon: "person", label: "Profile")
+                    Button(action: { showAdminEvents = true }) {
+                        AccountMenuItem(icon: "calendar", label: "Create Event")
+                    }
+                    .sheet(isPresented: $showAdminEvents) {
+                        AdminEventListView()
+                    }
+                    AccountMenuItem(icon: "doc", label: "Reports")
+                    AccountMenuItem(icon: "gear", label: "Settings")
+                } else if authVM.role.lowercased() == "artist" {
+                    AccountMenuItem(icon: "person", label: "Profile")
+                    AccountMenuItem(icon: "heart", label: "Likes")
+                    AccountMenuItem(icon: "calendar", label: "Apply For Event")
+                    AccountMenuItem(icon: "checkmark.circle", label: "Status")
+                    AccountMenuItem(icon: "gear", label: "Settings")
+                } else {
+                    AccountMenuItem(icon: "person", label: "Profile")
+                    AccountMenuItem(icon: "heart", label: "Likes")
+                    AccountMenuItem(icon: "calendar", label: "Apply For Event")
+                    AccountMenuItem(icon: "gear", label: "Settings")
+                }
+                Button("Logout") {
+                    authVM.signOut()
+                }
+                .foregroundColor(.red)
+                .padding(.top, 24)
+                Spacer()
+            }
+            .padding()
         }
     }
 }
 
+struct AccountMenuItem: View {
+    var icon: String
+    var label: String
+    var body: some View {
+        HStack {
+            Image(systemName: icon)
+            Text(label)
+            Spacer()
+        }
+        .padding(.vertical, 8)
+        Divider()
+    }
+}
 
-enum UserRole: String, CaseIterable {
-    case visitor = "Visitor"
-    case artist = "Artist"
-    case organizer = "Organizer"
+struct Artwork: Identifiable {
+    let id: String
+    var title: String
+    var artist: String
+    var imageUrl: String
+    var likes: Int
+}
 
-    var displayName: String { rawValue }
+struct ArtworkFeedView: View {
+    @State private var artworks: [Artwork] = []
+    @State private var showUpload = false
+    @State private var editingArtwork: Artwork? = nil
+    @State private var showEditSheet = false
+    @State private var artworkToDelete: Artwork? = nil
+    @State private var showDeleteAlert = false
+    
+    var body: some View {
+        NavigationStack {
+            VStack {
+                HStack {
+                    Image("arthub_logo")
+                        .resizable()
+                        .frame(width: 32, height: 32)
+                    Text("Vincent Van Gogh")
+                        .font(.headline)
+                    Spacer()
+                    Image(systemName: "bell")
+                }
+                .padding(.horizontal)
+                Button("Upload Artwork") {
+                    showUpload = true
+                }
+                .buttonStyle(.bordered)
+                .padding()
+                ScrollView {
+                    LazyVStack(spacing: 16) {
+                        ForEach(artworks) { art in
+                            ArtworkCardView(
+                                imageUrl: art.imageUrl,
+                                title: art.title,
+                                artist: art.artist,
+                                likes: art.likes,
+                                onEdit: {
+                                    print("Edit button tapped for artwork: \(art.title)")
+                                    editingArtwork = art
+                                    showEditSheet = true
+                                },
+                                onDelete: {
+                                    print("Delete button tapped for artwork: \(art.title)")
+                                    artworkToDelete = art
+                                    showDeleteAlert = true
+                                }
+                            )
+                        }
+                    }
+                }
+                .sheet(isPresented: $showUpload) {
+                    ArtworkUploadView()
+                }
+                .sheet(isPresented: $showEditSheet, onDismiss: {
+                    print("Edit sheet dismissed")
+                    editingArtwork = nil
+                }) {
+                    if let artwork = editingArtwork {
+                        EditArtworkView(artwork: artwork) { updatedArtwork in
+                            print("Artwork updated: \(updatedArtwork.title)")
+                            if let idx = artworks.firstIndex(where: { $0.id == updatedArtwork.id }) {
+                                artworks[idx] = updatedArtwork
+                                updateArtworkInFirebase(updatedArtwork)
+                            }
+                        }
+                    }
+                }
+                .alert("Delete Artwork", isPresented: $showDeleteAlert) {
+                    Button("Cancel", role: .cancel) {
+                        print("Delete cancelled")
+                        artworkToDelete = nil
+                    }
+                    Button("Delete", role: .destructive) {
+                        if let artworkToDelete = artworkToDelete {
+                            print("Deleting artwork: \(artworkToDelete.title)")
+                            artworks.removeAll { $0.id == artworkToDelete.id }
+                            deleteArtworkFromFirebase(artworkToDelete)
+                            self.artworkToDelete = nil
+                        }
+                    }
+                } message: {
+                    Text("Are you sure you want to delete this artwork?")
+                }
+            }
+            .navigationBarHidden(true)
+            .onAppear {
+                print("ArtworkFeedView appeared")
+                fetchArtworks()
+            }
+        }
+    }
+    
+    func fetchArtworks() {
+        print("Fetching artworks...")
+        let ref = Database.database().reference().child("artworks")
+        ref.observe(.value) { snapshot in
+            print("Received snapshot with \(snapshot.childrenCount) artworks")
+            var loaded: [Artwork] = []
+            for child in snapshot.children {
+                if let snap = child as? DataSnapshot,
+                   let dict = snap.value as? [String: Any],
+                   let title = dict["title"] as? String,
+                   let imageUrl = dict["imageUrl"] as? String {
+                    let artist = dict["artist"] as? String ?? "Unknown"
+                    let likes = dict["likes"] as? Int ?? 0
+                    loaded.append(Artwork(id: snap.key, title: title, artist: artist, imageUrl: imageUrl, likes: likes))
+                }
+            }
+            print("Loaded \(loaded.count) artworks")
+            DispatchQueue.main.async {
+                self.artworks = loaded
+            }
+        }
+    }
+    
+    func updateArtworkInFirebase(_ artwork: Artwork) {
+        print("Updating artwork in Firebase: \(artwork.title)")
+        let ref = Database.database().reference()
+        let dict: [String: Any] = [
+            "title": artwork.title,
+            "artist": artwork.artist,
+            "imageUrl": artwork.imageUrl,
+            "likes": artwork.likes
+        ]
+        ref.child("artworks").child(artwork.id).setValue(dict) { error, ref in
+            if let error = error {
+                print("Error updating artwork: \(error)")
+            } else {
+                print("Artwork updated successfully")
+            }
+        }
+    }
+    
+    func deleteArtworkFromFirebase(_ artwork: Artwork) {
+        print("Deleting artwork from Firebase: \(artwork.title)")
+        let ref = Database.database().reference()
+        ref.child("artworks").child(artwork.id).removeValue { error, ref in
+            if let error = error {
+                print("Error deleting artwork: \(error)")
+            } else {
+                print("Artwork deleted successfully")
+            }
+        }
+    }
+}
+
+struct ArtworkCardView: View {
+    var imageUrl: String
+    var title: String
+    var artist: String
+    var likes: Int
+    var onEdit: () -> Void
+    var onDelete: () -> Void
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if let url = URL(string: imageUrl), !imageUrl.isEmpty {
+                AsyncImage(url: url) { image in
+                    image.resizable().aspectRatio(contentMode: .fill)
+                } placeholder: {
+                    Rectangle().fill(Color(.systemGray5))
+                }
+                .frame(height: 160)
+                .clipped()
+            } else {
+                Rectangle().fill(Color(.systemGray5)).frame(height: 160)
+            }
+            HStack {
+                VStack(alignment: .leading) {
+                    Text(title).font(.headline).foregroundColor(.white)
+                    Text(artist).font(.subheadline).foregroundColor(.white.opacity(0.8))
+                }
+                Spacer()
+                HStack(spacing: 16) {
+                    HStack {
+                        Image(systemName: "heart.fill")
+                            .foregroundColor(.white)
+                        Text("\(likes)").foregroundColor(.white)
+                    }
+                    
+                    Menu {
+                        Button(action: {
+                            print("Edit menu item tapped")
+                            onEdit()
+                        }) {
+                            Label("Edit", systemImage: "pencil")
+                        }
+                        Button(role: .destructive, action: {
+                            print("Delete menu item tapped")
+                            onDelete()
+                        }) {
+                            Label("Delete", systemImage: "trash")
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis")
+                            .foregroundColor(.white)
+                            .padding(8)
+                            .background(Color.black.opacity(0.3))
+                            .clipShape(Circle())
+                    }
+                }
+            }
+            .padding()
+            .background(Color.black.opacity(0.7))
+        }
+        .cornerRadius(12)
+        .padding(.horizontal)
+    }
+}
+
+struct EditArtworkView: View {
+    @Environment(\.dismiss) var dismiss
+    @State private var editedArtwork: Artwork
+    var onSave: (Artwork) -> Void
+    @State private var image: UIImage? = nil
+    @State private var photoItem: PhotosPickerItem? = nil
+    @State private var isUploading = false
+    @State private var isViewReady = false
+    
+    init(artwork: Artwork, onSave: @escaping (Artwork) -> Void) {
+        _editedArtwork = State(initialValue: artwork)
+        self.onSave = onSave
+    }
+    
+    var body: some View {
+        NavigationStack {
+            Group {
+                if isViewReady {
+                    Form {
+                        Section(header: Text("Artwork Image")) {
+                            PhotosPicker(selection: $photoItem, matching: .images) {
+                                if let image = image {
+                                    Image(uiImage: image)
+                                        .resizable()
+                                        .aspectRatio(contentMode: .fill)
+                                        .frame(height: 120)
+                                        .clipped()
+                                } else if let url = URL(string: editedArtwork.imageUrl), !editedArtwork.imageUrl.isEmpty {
+                                    AsyncImage(url: url) { image in
+                                        image.resizable().aspectRatio(contentMode: .fill)
+                                    } placeholder: {
+                                        Rectangle().fill(Color(.systemGray5))
+                                    }
+                                    .frame(height: 120)
+                                    .clipped()
+                                } else {
+                                    Rectangle()
+                                        .fill(Color(.systemGray5))
+                                        .frame(height: 120)
+                                        .overlay(Text("Artwork Image"))
+                                }
+                            }
+                        }
+                        
+                        Section(header: Text("Artwork Details")) {
+                            TextField("Title", text: $editedArtwork.title)
+                            TextField("Artist", text: $editedArtwork.artist)
+                        }
+                    }
+                } else {
+                    ProgressView("Loading...")
+                }
+            }
+            .navigationTitle("Edit Artwork")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button("Cancel") {
+                        dismiss()
+                    }
+                }
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button(isUploading ? "Saving..." : "Save") {
+                        if let image = image {
+                            isUploading = true
+                            uploadImageAndSaveArtwork(image: image)
+                        } else {
+                            saveArtwork(imageUrl: editedArtwork.imageUrl)
+                        }
+                    }
+                    .disabled(isUploading)
+                }
+            }
+            .onChange(of: photoItem) { newItem in
+                if let newItem = newItem {
+                    Task {
+                        if let data = try? await newItem.loadTransferable(type: Data.self),
+                           let uiImage = UIImage(data: data) {
+                            image = uiImage
+                        }
+                    }
+                }
+            }
+            .onAppear {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                    isViewReady = true
+                }
+            }
+        }
+    }
+    
+    func uploadImageAndSaveArtwork(image: UIImage) {
+        let storageRef = Storage.storage().reference().child("artworks/\(UUID().uuidString).jpg")
+        guard let imageData = image.jpegData(compressionQuality: 0.8) else { return }
+        
+        storageRef.putData(imageData) { metadata, error in
+            if let error = error {
+                print("Upload error: \(error)")
+                isUploading = false
+                return
+            }
+            
+            storageRef.downloadURL { url, error in
+                isUploading = false
+                if let url = url {
+                    saveArtwork(imageUrl: url.absoluteString)
+                } else {
+                    saveArtwork(imageUrl: editedArtwork.imageUrl)
+                }
+            }
+        }
+    }
+    
+    func saveArtwork(imageUrl: String) {
+        var updated = editedArtwork
+        updated.imageUrl = imageUrl
+        onSave(updated)
+        dismiss()
+    }
+}
+
+struct ArtworkUploadView: View {
+    @Environment(\.dismiss) var dismiss
+    @State private var title = ""
+    @State private var description = ""
+    @State private var category = ""
+    @State private var year = ""
+    @State private var price = ""
+    @State private var image: UIImage? = nil
+    @State private var photoItem: PhotosPickerItem? = nil
+    @State private var isUploading = false
+    
+    var body: some View {
+        VStack(spacing: 16) {
+            HStack {
+                Button(action: { dismiss() }) {
+                    Image(systemName: "chevron.left")
+                }
+                Spacer()
+                Text("Artwork Upload").font(.headline)
+                Spacer()
+            }
+            .padding()
+            PhotosPicker(selection: $photoItem, matching: .images) {
+                if let image = image {
+                    Image(uiImage: image)
+                        .resizable()
+                        .aspectRatio(contentMode: .fill)
+                        .frame(width: 120, height: 120)
+                        .clipped()
+                } else {
+                    Rectangle()
+                        .fill(Color(.systemGray5))
+                        .frame(width: 120, height: 120)
+                        .overlay(Text("Image").foregroundColor(.gray))
+                }
+            }
+            .onChange(of: photoItem) { newItem in
+                if let newItem = newItem {
+                    Task {
+                        if let data = try? await newItem.loadTransferable(type: Data.self),
+                           let uiImage = UIImage(data: data) {
+                            image = uiImage
+                        }
+                    }
+                }
+            }
+            TextField("Title", text: $title)
+                .textFieldStyle(.roundedBorder)
+            TextField("Description", text: $description)
+                .textFieldStyle(.roundedBorder)
+            TextField("Category", text: $category)
+                .textFieldStyle(.roundedBorder)
+            TextField("Year Created", text: $year)
+                .textFieldStyle(.roundedBorder)
+            TextField("Price", text: $price)
+                .textFieldStyle(.roundedBorder)
+            Button(isUploading ? "Uploading..." : "Save") {
+                if let image = image {
+                    isUploading = true
+                    uploadImageAndSaveArtwork(image: image)
+                }
+            }
+            .disabled(isUploading || image == nil)
+            .buttonStyle(.bordered)
+            .padding(.top)
+            Spacer()
+        }
+        .padding()
+    }
+    
+    func uploadImageAndSaveArtwork(image: UIImage) {
+        let storageRef = Storage.storage().reference().child("artworks/\(UUID().uuidString).jpg")
+        guard let imageData = image.jpegData(compressionQuality: 0.8) else { return }
+        
+        storageRef.putData(imageData) { metadata, error in
+            if let error = error {
+                print("Upload error: \(error)")
+                isUploading = false
+                return
+            }
+            
+            storageRef.downloadURL { url, error in
+                isUploading = false
+                if let url = url {
+                    saveArtwork(imageUrl: url.absoluteString)
+                } else {
+                    saveArtwork(imageUrl: "")
+                }
+            }
+        }
+    }
+    
+    func saveArtwork(imageUrl: String) {
+        let ref = Database.database().reference().child("artworks").childByAutoId()
+        let dict: [String: Any] = [
+            "title": title,
+            "description": description,
+            "category": category,
+            "year": year,
+            "price": price,
+            "imageUrl": imageUrl,
+            "artist": "Unknown",
+            "likes": 0
+        ]
+        ref.setValue(dict) { error, ref in
+            if let error = error {
+                print("Error saving artwork: \(error)")
+            } else {
+                print("Artwork saved successfully")
+                dismiss()
+            }
+        }
+    }
+}
+
+struct AdminHomeView: View {
+    var body: some View {
+        VStack {
+            Text("Welcome to the Admin Home Page!")
+                .font(.largeTitle)
+                .padding()
+        }
+    }
+}
+
+struct AdminAccountPage: View {
+    var adminName: String
+    var adminEmail: String
+    var onLogout: (() -> Void)? = nil
+    @Environment(\.dismiss) var dismiss
+    var body: some View {
+        VStack(spacing: 16) {
+            HStack {
+                Image("arthub_logo")
+                    .resizable()
+                    .frame(width: 40, height: 40)
+                Spacer()
+                Text("Account")
+                    .font(.title2)
+                    .fontWeight(.semibold)
+                Spacer()
+            }
+            .padding(.top)
+            Rectangle()
+                .fill(Color(.systemGray5))
+                .frame(width: 80, height: 80)
+                .overlay(Text("Image").foregroundColor(.gray))
+            Text("\(adminName)(Admin)")
+                .font(.headline)
+            AccountMenuItem(icon: "person.fill", label: "Profile")
+            AccountMenuItem(icon: "calendar", label: "Create Event")
+            AccountMenuItem(icon: "doc", label: "Reports")
+            AccountMenuItem(icon: "gear", label: "Settings")
+            Button("Logout") {
+                onLogout?()
+                dismiss()
+            }
+            .foregroundColor(.red)
+            .padding(.top, 24)
+            Spacer()
+        }
+        .padding()
+    }
 }
 
 #Preview {
