@@ -1,108 +1,136 @@
 import SwiftUI
 import FirebaseDatabase
+import FirebaseAuth
 
 struct AdminHomeView: View {
     @State private var events: [Event] = []
     @State private var showCreateEvent = false
     @State private var isLoading = true
+    @State private var showAccount = false
+    // Replace with actual admin email from auth if available
+    let adminEmail: String = "abhishek991116"
+    var onLogout: () -> Void = {}
     
     var body: some View {
-        NavigationView {
-            VStack(alignment: .leading) {
-                HStack {
-                    Button(action: {}) {
-                        Image(systemName: "line.horizontal.3")
-                            .font(.title)
-                            .foregroundColor(.black)
-                    }
-                    Spacer()
-                    Text("Admin")
-                        .font(.title2)
-                        .fontWeight(.bold)
-                        .foregroundColor(.black)
-                    Spacer()
-                }
-                .padding(.horizontal)
-                
-                Button(action: {
-                    showCreateEvent = true
-                }) {
-                    Text("Create Event")
-                        .foregroundColor(.white)
-                        .frame(maxWidth: .infinity)
-                        .padding()
-                        .background(Color.black)
-                        .cornerRadius(30)
-                        .font(.headline)
-                }
-                .padding([.horizontal, .top])
-                
-                Text("Created Events")
-                    .font(.headline)
-                    .fontWeight(.semibold)
-                    .padding(.horizontal)
-                    .padding(.top, 8)
-                
-                if isLoading {
-                    Spacer()
-                    HStack { Spacer(); ProgressView(); Spacer() }
-                    Spacer()
-                } else if events.isEmpty {
-                    Spacer()
-                    HStack { Spacer(); Text("No events found.").foregroundColor(.gray); Spacer() }
-                    Spacer()
-                } else {
-                    ScrollView {
-                        VStack(spacing: 16) {
-                            ForEach(events) { event in
-                                HStack(alignment: .top, spacing: 12) {
-                                    AsyncImage(url: URL(string: event.bannerImageUrl)) { image in
-                                        image.resizable().aspectRatio(contentMode: .fill)
-                                    } placeholder: {
-                                        Color.gray.opacity(0.2)
-                                    }
-                                    .frame(width: 60, height: 60)
-                                    .cornerRadius(8)
-                                    VStack(alignment: .leading, spacing: 4) {
-                                        Text(event.title)
-                                            .font(.headline)
-                                            .fontWeight(.bold)
-                                        Text(event.eventDate, style: .date)
-                                            .font(.subheadline)
-                                            .foregroundColor(.gray)
-                                        Text(event.time)
-                                            .font(.subheadline)
-                                            .foregroundColor(.gray)
-                                    }
-                                    Spacer()
-                                    VStack(spacing: 12) {
-                                        Button(action: { /* Edit event */ }) {
-                                            Image(systemName: "pencil")
-                                                .foregroundColor(.black)
-                                        }
-                                        Button(action: { /* Delete event */ }) {
-                                            Image(systemName: "trash")
-                                                .foregroundColor(.black)
-                                        }
-                                    }
-                                }
-                                .padding(.horizontal)
-                            }
+        ZStack {
+            NavigationView {
+                VStack(alignment: .leading) {
+                    HStack {
+                        Button(action: { showAccount = true }) {
+                            Image(systemName: "line.horizontal.3")
+                                .font(.title)
+                                .foregroundColor(.black)
                         }
-                        .padding(.top, 8)
+                        Spacer()
+                        Text("Admin")
+                            .font(.title2)
+                            .fontWeight(.bold)
+                            .foregroundColor(.black)
+                        Spacer()
                     }
+                    .padding(.horizontal)
+                    
+                    Button(action: {
+                        showCreateEvent = true
+                    }) {
+                        Text("Create Event")
+                            .foregroundColor(.white)
+                            .frame(maxWidth: .infinity)
+                            .padding()
+                            .background(Color.black)
+                            .cornerRadius(30)
+                            .font(.headline)
+                    }
+                    .padding([.horizontal, .top])
+                    
+                    Text("Created Events")
+                        .font(.headline)
+                        .fontWeight(.semibold)
+                        .padding(.horizontal)
+                        .padding(.top, 8)
+                    
+                    if isLoading {
+                        Spacer()
+                        HStack { Spacer(); ProgressView(); Spacer() }
+                        Spacer()
+                    } else if events.isEmpty {
+                        Spacer()
+                        HStack { Spacer(); Text("No events found.").foregroundColor(.gray); Spacer() }
+                        Spacer()
+                    } else {
+                        ScrollView {
+                            VStack(spacing: 16) {
+                                ForEach(events) { event in
+                                    HStack(alignment: .top, spacing: 12) {
+                                        AsyncImage(url: URL(string: event.bannerImageUrl)) { image in
+                                            image.resizable().aspectRatio(contentMode: .fill)
+                                        } placeholder: {
+                                            Color.gray.opacity(0.2)
+                                        }
+                                        .frame(width: 60, height: 60)
+                                        .cornerRadius(8)
+                                        VStack(alignment: .leading, spacing: 4) {
+                                            Text(event.title)
+                                                .font(.headline)
+                                                .fontWeight(.bold)
+                                            Text(event.eventDate, style: .date)
+                                                .font(.subheadline)
+                                                .foregroundColor(.gray)
+                                            Text(event.time)
+                                                .font(.subheadline)
+                                                .foregroundColor(.gray)
+                                        }
+                                        Spacer()
+                                        VStack(spacing: 12) {
+                                            Button(action: { /* Edit event */ }) {
+                                                Image(systemName: "pencil")
+                                                    .foregroundColor(.black)
+                                            }
+                                            Button(action: { /* Delete event */ }) {
+                                                Image(systemName: "trash")
+                                                    .foregroundColor(.black)
+                                            }
+                                        }
+                                    }
+                                    .padding(.horizontal)
+                                }
+                            }
+                            .padding(.top, 8)
+                        }
+                    }
+                    Spacer()
                 }
-                Spacer()
+                .sheet(isPresented: $showCreateEvent, onDismiss: fetchEvents) {
+                    CreateEventView(onEventCreated: {
+                        showCreateEvent = false
+                        fetchEvents()
+                    })
+                }
+                .onAppear(perform: fetchEvents)
             }
-            .sheet(isPresented: $showCreateEvent, onDismiss: fetchEvents) {
-                CreateEventView(onEventCreated: {
-                    showCreateEvent = false
-                    fetchEvents()
-                })
+            .navigationViewStyle(StackNavigationViewStyle())
+            // Admin Account Page Overlay
+            if showAccount {
+                AdminAccountView(
+                    adminEmail: adminEmail,
+                    onBack: { showAccount = false },
+                    onLogout: {
+                        logout()
+                    }
+                )
+                .transition(.move(edge: .leading))
+                .zIndex(1)
             }
-            .onAppear(perform: fetchEvents)
         }
-        .navigationViewStyle(StackNavigationViewStyle())
+    }
+    
+    func logout() {
+        do {
+            try Auth.auth().signOut()
+            onLogout()
+        } catch {
+            print("Logout error: \(error.localizedDescription)")
+        }
     }
     
     func fetchEvents() {

@@ -38,7 +38,7 @@ struct RootView: View {
         case .artistHome:
             ArtistHomeView()
         case .adminHome:
-            AdminHomeView()
+            AdminHomeView(onLogout: { currentScreen = .login })
         }
     }
 }
