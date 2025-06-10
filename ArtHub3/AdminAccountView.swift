@@ -4,6 +4,7 @@ struct AdminAccountView: View {
     var adminEmail: String
     var onBack: () -> Void
     var onLogout: () -> Void
+    @State private var showProfile = false
     
     var body: some View {
         VStack(spacing: 0) {
@@ -32,7 +33,9 @@ struct AdminAccountView: View {
             .padding(.bottom, 16)
             
             VStack(spacing: 0) {
-                AccountRow(icon: "person.crop.circle", label: "Profile")
+                Button(action: { showProfile = true }) {
+                    AccountRow(icon: "person.crop.circle", label: "Profile")
+                }
                 Divider()
                 AccountRow(icon: "pencil", label: "Create Event")
                 Divider()
@@ -60,6 +63,9 @@ struct AdminAccountView: View {
             .padding(.bottom, 16)
         }
         .background(Color.white.ignoresSafeArea())
+        .fullScreenCover(isPresented: $showProfile) {
+            AdminProfileView(adminEmail: adminEmail, onBack: { showProfile = false })
+        }
     }
 }
 
