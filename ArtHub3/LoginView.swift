@@ -59,8 +59,13 @@ struct LoginView: View {
                 isLoading = true
                 authVM.login(email: email, password: password) { success, error in
                     isLoading = false
-                    if success, let role = authVM.userRole {
-                        onLoginSuccess(role)
+                    if success, let actualRole = authVM.userRole {
+                        if actualRole.lowercased() == selectedRole.lowercased() {
+                            onLoginSuccess(actualRole)
+                        } else {
+                            errorMessage = "You are not registered as a \(selectedRole)."
+                            showError = true
+                        }
                     } else {
                         errorMessage = error ?? "Unknown error"
                         showError = true
