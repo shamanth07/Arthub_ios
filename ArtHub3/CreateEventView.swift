@@ -3,6 +3,7 @@ import FirebaseDatabase
 import MapKit
 import PhotosUI
 import FirebaseStorage
+import Kingfisher
 
 struct CreateEventView: View {
     var onEventCreated: () -> Void
@@ -42,8 +43,9 @@ struct CreateEventView: View {
                         .padding(.top)
                     PhotosPicker(selection: $selectedBannerImage, matching: .images, photoLibrary: .shared()) {
                         ZStack {
+                            Color.gray.opacity(0.2)
                             if let image = bannerUIImage {
-                                Image(uiImage: image)
+                                KFImage(URL(string: bannerImageUrl))
                                     .resizable()
                                     .scaledToFill()
                                     .frame(height: 140)
