@@ -29,7 +29,7 @@ struct ArtistHomeView: View {
     @State private var showDeleteConfirmation = false
     @State private var showAccount = false
     @State private var showProfile = false
-    @State private var isLoggedOut = false
+    var onLogout: () -> Void
     
     var body: some View {
         NavigationView {
@@ -39,6 +39,12 @@ struct ArtistHomeView: View {
                         Image(systemName: "line.horizontal.3")
                             .font(.title)
                             .foregroundColor(.black)
+                    }
+                    Button(action: { fetchArtworks() }) {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.title)
+                            .foregroundColor(.blue)
+                            .padding(.leading, 8)
                     }
                     Spacer()
                     Text("Artist Home")
@@ -109,9 +115,7 @@ struct ArtistHomeView: View {
                                     Text(artwork.title)
                                         .font(.headline)
                                         .fontWeight(.bold)
-                                    Text(artwork.artistId)
-                                        .font(.subheadline)
-                                        .foregroundColor(.gray)
+                                    ArtistNameView(artistId: artwork.artistId)
                                 }
                                 .padding()
                                 .background(Color.white)
@@ -159,7 +163,7 @@ struct ArtistHomeView: View {
                     onLogout: {
                         do {
                             try Auth.auth().signOut()
-                            isLoggedOut = true
+                            onLogout()
                         } catch {
                             print("Logout error: \(error.localizedDescription)")
                         }
@@ -174,10 +178,6 @@ struct ArtistHomeView: View {
             }
             .sheet(isPresented: $showProfile) {
                 ArtistProfileView(onBack: { showProfile = false })
-            }
-            .fullScreenCover(isPresented: $isLoggedOut) {
-                // Replace with your actual login view
-                LoginView(onSignUp: {}, onLoginSuccess: { _ in })
             }
         }
         .navigationViewStyle(StackNavigationViewStyle())
@@ -752,6 +752,10 @@ struct ArtistProfileView: View {
                             TextField("Username", text: $username)
                                 .font(.title3)
                                 .fontWeight(.semibold)
+                                .contextMenu {
+                                    Button("Copy") { UIPasteboard.general.string = username }
+                                    Button("Paste") { if let string = UIPasteboard.general.string { username = string } }
+                                }
                         } else {
                             Text("\(username)\n(Artist)")
                                 .font(.title3)
@@ -799,6 +803,10 @@ struct ArtistProfileView: View {
                         if isEditing {
                             TextField("Email", text: $email)
                                 .foregroundColor(.gray)
+                                .contextMenu {
+                                    Button("Copy") { UIPasteboard.general.string = email }
+                                    Button("Paste") { if let string = UIPasteboard.general.string { email = string } }
+                                }
                         } else {
                             Text(email).foregroundColor(.gray)
                         }
@@ -807,6 +815,10 @@ struct ArtistProfileView: View {
                         if isEditing {
                             TextField("Bio", text: $bio)
                                 .foregroundColor(.gray)
+                                .contextMenu {
+                                    Button("Copy") { UIPasteboard.general.string = bio }
+                                    Button("Paste") { if let string = UIPasteboard.general.string { bio = string } }
+                                }
                         } else {
                             Text(bio).foregroundColor(.gray)
                         }
@@ -815,8 +827,16 @@ struct ArtistProfileView: View {
                         if isEditing {
                             TextField("Social Link 1", text: $socialLink1)
                                 .foregroundColor(.gray)
+                                .contextMenu {
+                                    Button("Copy") { UIPasteboard.general.string = socialLink1 }
+                                    Button("Paste") { if let string = UIPasteboard.general.string { socialLink1 = string } }
+                                }
                             TextField("Social Link 2", text: $socialLink2)
                                 .foregroundColor(.gray)
+                                .contextMenu {
+                                    Button("Copy") { UIPasteboard.general.string = socialLink2 }
+                                    Button("Paste") { if let string = UIPasteboard.general.string { socialLink2 = string } }
+                                }
                         } else {
                             Text(socialLink1).foregroundColor(.gray)
                             Text(socialLink2).foregroundColor(.gray)
@@ -960,6 +980,44 @@ struct ArtistProfileView: View {
     }
 }
 
+struct ArtistNameView: View {
+    let artistId: String
+    @State private var artistName: String = ""
+    @State private var isLoading = true
+    var body: some View {
+        if isLoading {
+            Text("By: ...")
+                .font(.subheadline)
+                .foregroundColor(.gray)
+        } else {
+            Text("By: \(artistName)")
+                .font(.subheadline)
+                .foregroundColor(.gray)
+        }
+    }
+    
+    func fetchArtistName() {
+        let ref = Database.database().reference().child("artists").child(artistId).child("profile")
+        ref.observeSingleEvent(of: .value) { snapshot in
+            DispatchQueue.main.async {
+                if let dict = snapshot.value as? [String: Any],
+                   let name = dict["username"] as? String,
+                   !name.trimmingCharacters(in: .whitespaces).isEmpty {
+                    artistName = name
+                } else {
+                    artistName = "Unknown Artist"
+                }
+                isLoading = false
+            }
+        }
+    }
+    
+    init(artistId: String) {
+        self.artistId = artistId
+        fetchArtistName()
+    }
+}
+
 #Preview {
-    ArtistHomeView()
-} 
+    ArtistHomeView(onLogout: {})
+}

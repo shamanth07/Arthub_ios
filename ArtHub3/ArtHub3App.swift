@@ -23,9 +23,7 @@ struct ArtHub3App: App {
     
     var body: some Scene {
         WindowGroup {
-            NavigationView {
-                ContentView()
-            }
+            RootView()
         }
     }
 }
