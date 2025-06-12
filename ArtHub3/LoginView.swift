@@ -123,22 +123,8 @@ struct LoginView: View {
             )
         }
     }
-    
-    @ViewBuilder
-    private func destinationViewForRole(_ role: String?) -> some View {
-        switch role {
-        case "Visitor":
-            VisitorHomeView()
-        case "Artist":
-            ArtistHomeView()
-        case "admin", "Admin":
-            AdminHomeView()
-        default:
-            Text("Unknown role")
-        }
-    }
 }
 
 #Preview {
     LoginView(onSignUp: {}, onLoginSuccess: { _ in })
-} 
+}

@@ -1,6 +1,7 @@
 import SwiftUI
 import FirebaseDatabase
 import Kingfisher
+import FirebaseAuth
 
 struct VisitorHomeView: View {
     enum FeedType: String, CaseIterable, Identifiable {
@@ -16,15 +17,25 @@ struct VisitorHomeView: View {
     @State private var errorMessage: String? = nil
     @State private var selectedArtwork: Artwork? = nil
     @State private var showArtworkDetail = false
+    @State private var showAccount = false
+    @State private var selectedEvent: Event? = nil
+    @State private var showEventDetail = false
+    var onLogout: () -> Void = {}
     
     var body: some View {
         VStack(spacing: 0) {
             // Top Bar
             HStack {
-                Button(action: { /* open sidebar if needed */ }) {
+                Button(action: { showAccount = true }) {
                     Image(systemName: "line.horizontal.3")
                         .font(.title)
                         .foregroundColor(.black)
+                }
+                Button(action: { fetchFeed() }) {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.title)
+                        .foregroundColor(.blue)
+                        .padding(.leading, 8)
                 }
                 Spacer()
                 Text("ARTHUB")
@@ -97,7 +108,13 @@ struct VisitorHomeView: View {
                 ScrollView {
                     VStack(spacing: 20) {
                         ForEach(filteredEvents) { event in
-                            VisitorEventCard(event: event)
+                            Button(action: {
+                                selectedEvent = event
+                                showEventDetail = true
+                            }) {
+                                VisitorEventCard(event: event)
+                            }
+                            .buttonStyle(PlainButtonStyle())
                         }
                     }
                     .padding(.vertical, 8)
@@ -106,9 +123,25 @@ struct VisitorHomeView: View {
         }
         .background(Color(.systemGray6).ignoresSafeArea())
         .onAppear(perform: fetchFeed)
+        .sheet(isPresented: $showAccount) {
+            VisitorAccountView(onLogout: {
+                do {
+                    try Auth.auth().signOut()
+                    onLogout()
+                } catch {
+                    print("Logout error: \(error.localizedDescription)")
+                }
+                showAccount = false
+            }, onBack: { showAccount = false })
+        }
         .sheet(isPresented: $showArtworkDetail) {
             if let artwork = selectedArtwork {
                 VisitorArtworkDetailView(artwork: artwork, onClose: { showArtworkDetail = false })
+            }
+        }
+        .sheet(isPresented: $showEventDetail) {
+            if let event = selectedEvent {
+                VisitorEventDetailView(event: event, onClose: { showEventDetail = false })
             }
         }
     }
@@ -202,6 +235,8 @@ struct VisitorHomeView: View {
 
 struct VisitorArtworkCard: View {
     let artwork: Artwork
+    @State private var artistName: String = ""
+    @State private var isLoading = true
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             ZStack {
@@ -215,9 +250,15 @@ struct VisitorArtworkCard: View {
             .clipped()
             Text(artwork.title)
                 .font(.headline)
-            Text("By: \(artwork.artistId)")
-                .font(.subheadline)
-                .fontWeight(.bold)
+            if isLoading {
+                Text("By: ...")
+                    .font(.subheadline)
+                    .fontWeight(.bold)
+            } else {
+                Text("By: \(artistName)")
+                    .font(.subheadline)
+                    .fontWeight(.bold)
+            }
             HStack(spacing: 16) {
                 HStack(spacing: 4) {
                     Image(systemName: "heart")
@@ -236,6 +277,22 @@ struct VisitorArtworkCard: View {
         .cornerRadius(16)
         .shadow(radius: 2)
         .padding(.horizontal)
+        .onAppear(perform: fetchArtistName)
+    }
+    func fetchArtistName() {
+        let ref = Database.database().reference().child("artists").child(artwork.artistId).child("profile")
+        ref.observeSingleEvent(of: .value) { snapshot in
+            DispatchQueue.main.async {
+                if let dict = snapshot.value as? [String: Any],
+                   let name = dict["username"] as? String,
+                   !name.trimmingCharacters(in: .whitespaces).isEmpty {
+                    artistName = name
+                } else {
+                    artistName = "Unknown Artist"
+                }
+                isLoading = false
+            }
+        }
     }
 }
 
@@ -357,6 +414,201 @@ struct VisitorArtworkDetailView: View {
     }
 }
 
+struct VisitorAccountView: View {
+    var onLogout: () -> Void
+    var onBack: () -> Void
+    @State private var username: String = Auth.auth().currentUser?.email?.components(separatedBy: "@").first ?? "Visitor"
+    @State private var showProfile = false
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Button(action: onBack) {
+                    Image(systemName: "arrow.left.circle.fill")
+                        .resizable()
+                        .frame(width: 32, height: 32)
+                        .foregroundColor(.blue)
+                }
+                Spacer()
+            }
+            .padding([.top, .leading])
+            VStack(spacing: 8) {
+                Image(systemName: "person.crop.circle")
+                    .resizable()
+                    .frame(width: 80, height: 80)
+                    .foregroundColor(.orange)
+                    .padding(.top, 8)
+                Text("\(username)(visitor)")
+                    .font(.title3)
+                    .fontWeight(.semibold)
+                    .padding(.top, 4)
+            }
+            .padding(.bottom, 16)
+            VStack(spacing: 0) {
+                Button(action: { showProfile = true }) {
+                    VisitorAccountRow(icon: "person.crop.circle", label: "Profile")
+                }
+                Divider()
+                VisitorAccountRow(icon: "house.fill", label: "Booking History", iconColor: .red)
+                Divider()
+                VisitorAccountRow(icon: "gearshape", label: "Settings", iconColor: .gray)
+            }
+            .background(Color.white)
+            .cornerRadius(12)
+            .padding(.horizontal)
+            .padding(.bottom, 24)
+            Spacer()
+            Button(action: onLogout) {
+                Text("Logout")
+                    .foregroundColor(.white)
+                    .fontWeight(.bold)
+                    .frame(maxWidth: .infinity)
+                    .padding()
+                    .background(Color.red)
+                    .cornerRadius(30)
+            }
+            .padding(.horizontal)
+            .padding(.bottom, 16)
+        }
+        .background(Color.white.ignoresSafeArea())
+        .sheet(isPresented: $showProfile) {
+            VisitorProfileView()
+        }
+    }
+}
+
+struct VisitorAccountRow: View {
+    var icon: String
+    var label: String
+    var iconColor: Color = .blue
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: icon)
+                .foregroundColor(iconColor)
+                .frame(width: 24, height: 24)
+            Text(label)
+                .font(.headline)
+                .foregroundColor(.black)
+            Spacer()
+        }
+        .padding(.vertical, 12)
+        .padding(.horizontal, 8)
+    }
+}
+
+struct VisitorEventDetailView: View {
+    let event: Event
+    var onClose: () -> Void
+    @State private var ticketCount: Int = 1
+    @State private var attending: Bool? = nil
+    let taxRate: Double = 0.18
+    var subtotal: Double { Double(event.ticketPrice) * Double(ticketCount) }
+    var tax: Double { subtotal * taxRate }
+    var total: Double { subtotal + tax }
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                ZStack(alignment: .topTrailing) {
+                    Color.gray.opacity(0.2)
+                    KFImage(URL(string: event.bannerImageUrl))
+                        .resizable()
+                        .aspectRatio(contentMode: .fill)
+                }
+                .frame(height: 180)
+                .cornerRadius(8)
+                .clipped()
+                Text(event.title)
+                    .font(.system(size: 32, weight: .bold))
+                Text("Location: \(event.location)")
+                    .font(.title3)
+                Text("Date: \(event.eventDate, formatter: dateFormatter) at \(event.time)")
+                    .font(.title3)
+                Text(event.description)
+                    .font(.body)
+                    .padding(.top, 4)
+                HStack(spacing: 12) {
+                    Text("Tickets:")
+                    Button(action: { if ticketCount > 1 { ticketCount -= 1 } }) {
+                        Image(systemName: "minus.circle")
+                            .font(.title2)
+                    }
+                    Text("\(ticketCount)")
+                        .font(.title2)
+                    Button(action: { ticketCount += 1 }) {
+                        Image(systemName: "plus.circle")
+                            .font(.title2)
+                    }
+                }
+                .padding(.vertical, 4)
+                HStack(spacing: 24) {
+                    Button(action: { attending = true }) {
+                        HStack {
+                            Image(systemName: "checkmark")
+                            Text("Attending")
+                        }
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 24)
+                        .padding(.vertical, 12)
+                        .background(attending == true ? Color.green : Color.gray.opacity(0.3))
+                        .cornerRadius(30)
+                    }
+                    Button(action: { attending = false }) {
+                        HStack {
+                            Image(systemName: "xmark")
+                            Text("Not Attending")
+                        }
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 24)
+                        .padding(.vertical, 12)
+                        .background(attending == false ? Color.red : Color.gray.opacity(0.3))
+                        .cornerRadius(30)
+                    }
+                }
+                .padding(.vertical, 4)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(String(format: "SubTotal: $%.2f", subtotal))
+                    Text(String(format: "Tax (18%%): $%.2f", tax))
+                    Text(String(format: "Total: $%.2f", total))
+                }
+                .font(.title3)
+                .padding(.top, 8)
+                Button(action: {}) {
+                    Text("Book Now")
+                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding()
+                        .background(Color.blue)
+                        .cornerRadius(30)
+                }
+                .padding(.top, 16)
+                .disabled(attending != true)
+            }
+            .padding()
+        }
+        .background(Color(.systemGray6).ignoresSafeArea())
+        .overlay(
+            HStack {
+                Spacer()
+                VStack {
+                    Button(action: onClose) {
+                        Image(systemName: "xmark.circle.fill")
+                            .resizable()
+                            .frame(width: 32, height: 32)
+                            .foregroundColor(.gray)
+                            .padding()
+                    }
+                    Spacer()
+                }
+            }
+        )
+    }
+}
+
+private let dateFormatter: DateFormatter = {
+    let df = DateFormatter()
+    df.dateFormat = "yyyy-MM-dd"
+    return df
+}()
+
 #Preview {
     VisitorHomeView()
-} 
+}
