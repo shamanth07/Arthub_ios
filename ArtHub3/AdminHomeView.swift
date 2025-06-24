@@ -17,7 +17,7 @@ struct AdminHomeView: View {
     @State private var showMessagesList = false
     @State private var hasUnreadMessages = false
     @State private var unreadMessageCount = 0
-  
+    // Replace with actual admin email from auth if available
     let adminEmail: String = "abhishek991116"
     @State private var showCommentsSheet = false
     var onLogout: () -> Void
@@ -384,4 +384,4 @@ struct EventCard: View {
 
 #Preview {
     AdminHomeView(onLogout: {})
-}
+} 
