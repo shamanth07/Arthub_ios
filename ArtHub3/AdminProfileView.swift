@@ -105,6 +105,9 @@ struct AdminProfileView: View {
                     }
                 }
                 Divider()
+                NavigationLink(destination: LiveChatUserListView()) {
+                    Text("Live Chat")
+                }
             }
             .padding(.horizontal)
             .padding(.top, 16)
@@ -135,4 +138,4 @@ struct AdminProfileView: View {
 
 #Preview {
     AdminProfileView(adminEmail: "abhishek991116@gmail.com", onBack: {})
-} 
+}
