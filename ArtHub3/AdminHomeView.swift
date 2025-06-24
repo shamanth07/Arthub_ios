@@ -15,7 +15,7 @@ struct AdminHomeView: View {
     @State private var showUpdateSuccess = false
     // Replace with actual admin email from auth if available
     let adminEmail: String = "abhishek991116"
-    var onLogout: () -> Void = {}
+    var onLogout: () -> Void
     
     var body: some View {
         ZStack {
@@ -26,6 +26,12 @@ struct AdminHomeView: View {
                             Image(systemName: "line.horizontal.3")
                                 .font(.title)
                                 .foregroundColor(.black)
+                        }
+                        Button(action: { fetchEvents() }) {
+                            Image(systemName: "arrow.clockwise")
+                                .font(.title)
+                                .foregroundColor(.blue)
+                                .padding(.leading, 8)
                         }
                         Spacer()
                         Text("Admin")
@@ -247,5 +253,5 @@ struct AdminHomeView: View {
 }
 
 #Preview {
-    AdminHomeView()
-} 
+    AdminHomeView(onLogout: {})
+}
