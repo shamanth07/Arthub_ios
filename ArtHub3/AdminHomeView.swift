@@ -10,11 +10,16 @@ struct AdminHomeView: View {
     @State private var showAccount = false
     @State private var showEditEvent = false
     @State private var selectedEvent: Event? = nil
-    @State private var showDeleteConfirmation = false
     @State private var eventToDelete: Event? = nil
     @State private var showUpdateSuccess = false
-    // Replace with actual admin email from auth if available
+    @State private var errorMessage: String? = nil
+    @State private var showingManageInvitations = false
+    @State private var showMessagesList = false
+    @State private var hasUnreadMessages = false
+    @State private var unreadMessageCount = 0
+  
     let adminEmail: String = "abhishek991116"
+    @State private var showCommentsSheet = false
     var onLogout: () -> Void
     
     var body: some View {
@@ -39,6 +44,21 @@ struct AdminHomeView: View {
                             .fontWeight(.bold)
                             .foregroundColor(.black)
                         Spacer()
+                        Button(action: { showMessagesList = true }) {
+                            ZStack(alignment: .topTrailing) {
+                                Image(systemName: "bell.fill")
+                                    .font(.title2)
+                                    .foregroundColor(.black)
+                                if unreadMessageCount > 0 {
+                                    Text("\(unreadMessageCount)")
+                                        .font(.caption2)
+                                        .foregroundColor(.white)
+                                        .padding(5)
+                                        .background(Circle().fill(Color.red))
+                                        .offset(x: 8, y: -8)
+                                }
+                            }
+                        }
                     }
                     .padding(.horizontal)
                     
@@ -65,57 +85,35 @@ struct AdminHomeView: View {
                         Spacer()
                         HStack { Spacer(); ProgressView(); Spacer() }
                         Spacer()
+                    } else if let errorMessage = errorMessage {
+                        Spacer()
+                        Text(errorMessage).foregroundColor(.red)
+                        Spacer()
                     } else if events.isEmpty {
                         Spacer()
                         HStack { Spacer(); Text("No events found.").foregroundColor(.gray); Spacer() }
                         Spacer()
                     } else {
-                        ScrollView {
-                            VStack(spacing: 16) {
-                                ForEach(events) { event in
-                                    HStack(alignment: .top, spacing: 12) {
-                                        ZStack {
-                                            Color.gray.opacity(0.2)
-                                            KFImage(URL(string: event.bannerImageUrl))
-                                                .resizable()
-                                                .aspectRatio(contentMode: .fill)
-                                        }
-                                        .frame(width: 60, height: 60)
-                                        .cornerRadius(8)
-                                        VStack(alignment: .leading, spacing: 4) {
-                                            Text(event.title)
-                                                .font(.headline)
-                                                .fontWeight(.bold)
-                                            Text(event.eventDate, style: .date)
-                                                .font(.subheadline)
-                                                .foregroundColor(.gray)
-                                            Text(event.time)
-                                                .font(.subheadline)
-                                                .foregroundColor(.gray)
-                                        }
-                                        Spacer()
-                                        VStack(spacing: 12) {
-                                            Button(action: {
-                                                selectedEvent = event
-                                                showEditEvent = true
-                                            }) {
-                                                Image(systemName: "pencil")
-                                                    .foregroundColor(.black)
-                                            }
-                                            Button(action: {
-                                                eventToDelete = event
-                                                showDeleteConfirmation = true
-                                            }) {
-                                                Image(systemName: "trash")
-                                                    .foregroundColor(.black)
-                                            }
-                                        }
+                        List {
+                            ForEach(events) { event in
+                                EventCard(
+                                    event: event,
+                                    onEdit: {
+                                            selectedEvent = event
+                                            showEditEvent = true
+                                    },
+                                    onDelete: {
+                                            eventToDelete = event
+                                    },
+                                    onShowComments: {
+                                        selectedEvent = event
+                                        showCommentsSheet = true
                                     }
-                                    .padding(.horizontal)
-                                }
+                                )
+                                .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
                             }
-                            .padding(.top, 8)
                         }
+                        .listStyle(.plain)
                     }
                     Spacer()
                 }
@@ -167,21 +165,32 @@ struct AdminHomeView: View {
                 }
             }
         }
-        .alert(isPresented: $showDeleteConfirmation) {
+        .alert(item: $eventToDelete) { event in
             Alert(
                 title: Text("Delete Event"),
                 message: Text("Are you sure you want to delete this event?"),
-                primaryButton: .destructive(Text("Delete"), action: {
-                    if let event = eventToDelete {
-                        deleteEvent(event)
-                        eventToDelete = nil
-                    }
-                }),
-                secondaryButton: .cancel({ eventToDelete = nil })
+                primaryButton: .destructive(Text("Delete")) {
+                    deleteEvent(event)
+                },
+                secondaryButton: .cancel()
             )
         }
         .alert(isPresented: $showUpdateSuccess) {
             Alert(title: Text("Success"), message: Text("Event updated successfully!"), dismissButton: .default(Text("OK")))
+        }
+        .sheet(isPresented: $showMessagesList) {
+            MessageSendersListView(
+                currentUserRole: "admin",
+                currentUserName: adminUsername
+            )
+        }
+        .sheet(isPresented: $showCommentsSheet) {
+            if let event = selectedEvent {
+                EventCommentsSheet(eventId: event.id, isVisitor: false)
+            }
+        }
+        .onAppear {
+            observeUnreadMessages()
         }
     }
     
@@ -196,6 +205,7 @@ struct AdminHomeView: View {
     
     func fetchEvents() {
         isLoading = true
+        errorMessage = nil
         print("Fetching events from Firebase...")
         let ref = Database.database().reference().child("events")
         ref.observeSingleEvent(of: .value) { snapshot in
@@ -249,6 +259,126 @@ struct AdminHomeView: View {
                 fetchEvents()
             }
         }
+    }
+    
+    func observeUnreadMessages() {
+        guard let userId = Auth.auth().currentUser?.uid else { return }
+        let db = Database.database().reference()
+        db.child("chats").observe(.value) { snapshot in
+            var count = 0
+            let group = DispatchGroup()
+            for child in snapshot.children {
+                if let chatSnap = child as? DataSnapshot {
+                    let chatId = chatSnap.key
+                    let ids = chatId.components(separatedBy: "_")
+                    guard ids.contains(userId), ids.count == 2 else { continue }
+                    let otherUserId = ids.first { $0 != userId } ?? ""
+                    group.enter()
+                    // Try users first
+                    db.child("users").child(otherUserId).observeSingleEvent(of: .value) { userSnap in
+                        if let userDict = userSnap.value as? [String: Any], let role = userDict["role"] as? String {
+                            let otherUserRole = role.lowercased()
+                            let messagesSnap = chatSnap.childSnapshot(forPath: "messages")
+                            for msgChild in messagesSnap.children {
+                                if let msgSnap = msgChild as? DataSnapshot,
+                                   let dict = msgSnap.value as? [String: Any],
+                                   let senderId = dict["sender"] as? String,
+                                   senderId == otherUserRole,
+                                   let isRead = dict["isRead"] as? Bool,
+                                   !isRead {
+                                    count += 1
+                                }
+                            }
+                            group.leave()
+                        } else {
+                            // Try admin if not found in users
+                            db.child("admin").child(otherUserId).observeSingleEvent(of: .value) { adminSnap in
+                                if let adminDict = adminSnap.value as? [String: Any], let role = adminDict["role"] as? String {
+                                    let otherUserRole = role.lowercased()
+                                    let messagesSnap = chatSnap.childSnapshot(forPath: "messages")
+                                    for msgChild in messagesSnap.children {
+                                        if let msgSnap = msgChild as? DataSnapshot,
+                                           let dict = msgSnap.value as? [String: Any],
+                                           let senderId = dict["sender"] as? String,
+                                           senderId == otherUserRole,
+                                           let isRead = dict["isRead"] as? Bool,
+                                           !isRead {
+                                            count += 1
+                                        }
+                                    }
+                                    group.leave()
+                                } else {
+                                    // Not found in users or admin, just leave
+                                    group.leave()
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            group.notify(queue: .main) {
+                unreadMessageCount = count
+            }
+        }
+    }
+    
+    var adminUsername: String {
+        Auth.auth().currentUser?.email?.components(separatedBy: "@").first ?? "Admin"
+    }
+}
+
+struct EventCard: View {
+    let event: Event
+    var onEdit: () -> Void
+    var onDelete: () -> Void
+    var onShowComments: () -> Void
+    var body: some View {
+        HStack(spacing: 16) {
+            KFImage(URL(string: event.bannerImageUrl))
+                .resizable()
+                .aspectRatio(contentMode: .fill)
+                .frame(width: 80, height: 80)
+                .cornerRadius(8)
+                .clipped()
+            
+            VStack(alignment: .leading, spacing: 4) {
+                Text(event.title)
+                    .font(.headline)
+                    .fontWeight(.bold)
+                Text(event.eventDate, style: .date)
+                    .font(.subheadline)
+                    .foregroundColor(.gray)
+                Text(event.time)
+                    .font(.subheadline)
+                    .foregroundColor(.gray)
+                Text("Max Artists: \(event.maxArtists)")
+                    .font(.subheadline)
+                    .foregroundColor(.gray)
+                
+                Button(action: onShowComments) {
+                    Text("Comments")
+                        .font(.callout)
+                        .foregroundColor(.purple)
+                }
+                .buttonStyle(.plain)
+                .padding(.top, 4)
+            }
+            
+            Spacer()
+            
+            VStack(spacing: 24) {
+                Button(action: onEdit) {
+                    Image(systemName: "pencil")
+                }
+                .buttonStyle(.plain)
+                Button(action: onDelete) {
+                    Image(systemName: "trash")
+                }
+                .buttonStyle(.plain)
+            }
+            .foregroundColor(.black)
+        }
+        .buttonStyle(.plain)
     }
 }
 
