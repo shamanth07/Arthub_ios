@@ -6,6 +6,9 @@ struct AdminAccountView: View {
     var onLogout: () -> Void
     @State private var showProfile = false
     @State private var showCreateEvent = false
+    @State private var showManageInvitations = false
+    @State private var showSettings = false
+    @State private var showReports = false
     
     var body: some View {
         VStack(spacing: 0) {
@@ -42,11 +45,17 @@ struct AdminAccountView: View {
                     AccountRow(icon: "pencil", label: "Create Event")
                 }
                 Divider()
-                AccountRow(icon: "person.2.badge.gearshape", label: "Manage Invitations")
+                Button(action: { showManageInvitations = true }) {
+                    AccountRow(icon: "envelope", label: "Manage Invitations")
+                }
                 Divider()
+                Button(action: { showReports = true }) {
                 AccountRow(icon: "chart.bar", label: "Reports")
+                }
                 Divider()
-                AccountRow(icon: "gearshape", label: "Settings")
+                Button(action: { showSettings = true }) {
+                    AccountRow(icon: "gearshape", label: "Settings")
+                }
             }
             .background(Color.white)
             .cornerRadius(12)
@@ -72,6 +81,18 @@ struct AdminAccountView: View {
         .fullScreenCover(isPresented: $showCreateEvent) {
             CreateEventView(onEventCreated: { showCreateEvent = false })
         }
+        .sheet(isPresented: $showManageInvitations) {
+            ManageInvitationsView()
+        }
+        .sheet(isPresented: $showSettings) {
+            SettingsView(
+                currentUserRole: "admin",
+                currentUserName: adminEmail
+            )
+        }
+        .sheet(isPresented: $showReports) {
+            ReportsPage()
+        }
     }
 }
 
@@ -95,4 +116,4 @@ struct AccountRow: View {
 
 #Preview {
     AdminAccountView(adminEmail: "abhishek991116", onBack: {}, onLogout: {})
-} 
+}
