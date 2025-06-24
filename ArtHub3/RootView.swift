@@ -15,7 +15,7 @@ struct RootView: View {
     var body: some View {
         switch currentScreen {
         case .splash:
-            SplashView { currentScreen = .login }
+            SplashView(onFinish: { currentScreen = .login })
         case .login:
             LoginView(
                 onSignUp: { currentScreen = .register },
@@ -34,9 +34,9 @@ struct RootView: View {
                 onRegisterSuccess: { currentScreen = .login }
             )
         case .visitorHome:
-            VisitorHomeView()
+            VisitorHomeView(onLogout: { currentScreen = .login })
         case .artistHome:
-            ArtistHomeView()
+            ArtistHomeView(onLogout: { currentScreen = .login })
         case .adminHome:
             AdminHomeView(onLogout: { currentScreen = .login })
         }
@@ -45,4 +45,4 @@ struct RootView: View {
 
 #Preview {
     RootView()
-} 
+}
