@@ -168,3 +168,4 @@ struct ApplyForEventView: View {
         }
     }
 }
+
