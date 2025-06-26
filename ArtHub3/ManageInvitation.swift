@@ -201,4 +201,4 @@ struct ArtistInvitation: Identifiable, Codable {
 
 #Preview {
     ManageInvitationsView()
-}
+} 
