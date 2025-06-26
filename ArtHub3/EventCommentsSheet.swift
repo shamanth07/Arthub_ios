@@ -198,4 +198,4 @@ struct EventCommentThreadView: View {
             }
         }
     }
-}
+} 
