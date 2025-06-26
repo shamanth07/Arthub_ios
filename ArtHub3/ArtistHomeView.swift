@@ -4,6 +4,7 @@ import FirebaseAuth
 import PhotosUI
 import FirebaseStorage
 import Kingfisher
+import UserNotifications
 
 struct Artwork: Identifiable, Equatable {
     let id: String
@@ -25,11 +26,22 @@ struct ArtistHomeView: View {
     @State private var errorMessage: String? = nil
     @State private var selectedArtwork: Artwork? = nil
     @State private var showEditArtwork = false
+    @State private var showDeleteAlert = false
     @State private var artworkToDelete: Artwork? = nil
-    @State private var showDeleteConfirmation = false
     @State private var showAccount = false
     @State private var showProfile = false
+    @State private var showApplyForEvent = false
+    @State private var showStatus = false
+    @State private var showSettings = false
+    @State private var showMessagesList = false
+    @State private var hasUnreadMessages = false
+    @State private var unreadMessageCount = 0
+    @State private var lastInvitationStatuses: [String: String] = [:]
     var onLogout: () -> Void
+    
+    var artistUsername: String {
+        Auth.auth().currentUser?.email?.components(separatedBy: "@").first ?? "Artist"
+    }
     
     var body: some View {
         NavigationView {
@@ -52,6 +64,21 @@ struct ArtistHomeView: View {
                         .fontWeight(.bold)
                         .foregroundColor(.black)
                     Spacer()
+                    Button(action: { showMessagesList = true }) {
+                        ZStack(alignment: .topTrailing) {
+                            Image(systemName: "bell.fill")
+                                .font(.title2)
+                                .foregroundColor(.black)
+                            if unreadMessageCount > 0 {
+                                Text("\(unreadMessageCount)")
+                                    .font(.caption2)
+                                    .foregroundColor(.white)
+                                    .padding(5)
+                                    .background(Circle().fill(Color.red))
+                                    .offset(x: 8, y: -8)
+                            }
+                        }
+                    }
                 }
                 .padding(.horizontal)
                 
@@ -65,6 +92,11 @@ struct ArtistHomeView: View {
                         .font(.headline)
                 }
                 .padding([.horizontal, .top])
+                
+                Button("Test Notification") {
+                    showStatusNotification(status: "accepted", eventName: "Test Event")
+                }
+                .padding()
                 
                 if isLoading {
                     Spacer()
@@ -80,51 +112,32 @@ struct ArtistHomeView: View {
                     Spacer()
                 } else {
                     ScrollView {
-                        VStack(spacing: 16) {
+                        VStack(spacing: 20) {
                             ForEach(artworks) { artwork in
-                                VStack(alignment: .leading, spacing: 8) {
-                                    ZStack(alignment: .topTrailing) {
-                                        Button(action: {
+                                ZStack(alignment: .topTrailing) {
+                                    ArtistArtworkCard(
+                                        artwork: artwork,
+                                        onEdit: {
                                             selectedArtwork = artwork
                                             showEditArtwork = true
-                                        }) {
-                                            VStack(alignment: .leading, spacing: 0) {
-                                                ZStack {
-                                                    Color.gray.opacity(0.2)
-                                                    KFImage(URL(string: artwork.imageUrl))
-                                                        .resizable()
-                                                        .aspectRatio(contentMode: .fill)
-                                                }
-                                                .frame(height: 200)
-                                                .cornerRadius(12)
-                                                .clipped()
-                                            }
                                         }
-                                        Button(action: {
-                                            artworkToDelete = artwork
-                                            showDeleteConfirmation = true
-                                        }) {
-                                            Image(systemName: "trash")
-                                                .foregroundColor(.black)
-                                                .padding(8)
-                                                .background(Color.white.opacity(0.8))
-                                                .clipShape(Circle())
-                                                .padding([.top, .trailing], 8)
-                                        }
+                                    )
+                                    Button(action: {
+                                        artworkToDelete = artwork
+                                        showDeleteAlert = true
+                                    }) {
+                                        Image(systemName: "trash")
+                                            .foregroundColor(.red)
+                                            .padding(12)
+                                            .background(Color.white.opacity(0.8))
+                                            .clipShape(Circle())
+                                            .shadow(radius: 2)
                                     }
-                                    Text(artwork.title)
-                                        .font(.headline)
-                                        .fontWeight(.bold)
-                                    ArtistNameView(artistId: artwork.artistId)
+                                    .padding([.top, .trailing], 8)
                                 }
-                                .padding()
-                                .background(Color.white)
-                                .cornerRadius(16)
-                                .shadow(radius: 2)
-                                .padding(.horizontal)
                             }
                         }
-                        .padding(.top, 8)
+                        .padding(.vertical, 8)
                     }
                 }
                 Spacer(minLength: 0)
@@ -137,26 +150,17 @@ struct ArtistHomeView: View {
                 })
             }
             .sheet(isPresented: $showEditArtwork, onDismiss: fetchArtworks) {
-                if let artwork = selectedArtwork {
-                    EditArtworkView(artwork: artwork, onSave: {
-                        showEditArtwork = false
-                        selectedArtwork = nil
-                        fetchArtworks()
-                    })
+                if let selectedArtwork = selectedArtwork {
+                    EditArtworkView(artwork: selectedArtwork, onSave: fetchArtworks)
                 }
             }
-            .alert(isPresented: $showDeleteConfirmation) {
-                Alert(
-                    title: Text("Delete Artwork"),
-                    message: Text("Are you sure you want to delete this artwork?"),
-                    primaryButton: .destructive(Text("Delete"), action: {
-                        if let artwork = artworkToDelete {
-                            deleteArtwork(artwork)
-                            artworkToDelete = nil
-                        }
-                    }),
-                    secondaryButton: .cancel({ artworkToDelete = nil })
-                )
+            .alert("Delete Artwork?", isPresented: $showDeleteAlert, presenting: artworkToDelete) { artwork in
+                Button("Delete", role: .destructive) {
+                    deleteArtwork(artwork)
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: { artwork in
+                Text("Are you sure you want to delete \(artwork.title)? This cannot be undone.")
             }
             .sheet(isPresented: $showAccount) {
                 ArtistAccountView(
@@ -179,8 +183,36 @@ struct ArtistHomeView: View {
             .sheet(isPresented: $showProfile) {
                 ArtistProfileView(onBack: { showProfile = false })
             }
+            .sheet(isPresented: $showApplyForEvent) {
+                ApplyForEventView(onClose: { showApplyForEvent = false })
+            }
+            .sheet(isPresented: $showStatus) {
+                ArtistStatusView()
+            }
+            .sheet(isPresented: $showSettings) {
+                SettingsView(
+                    currentUserRole: "artist",
+                    currentUserName: artistUsername
+                )
+            }
+            .sheet(isPresented: $showMessagesList) {
+                MessageSendersListView(
+                    currentUserRole: "artist",
+                    currentUserName: artistUsername
+                )
+            }
         }
         .navigationViewStyle(StackNavigationViewStyle())
+        .onAppear {
+            fetchArtworks()
+            requestNotificationPermission()
+            if let user = Auth.auth().currentUser {
+                print("Calling checkInvitationStatusOnce for artist: \(user.uid)")
+                checkInvitationStatusOnce(artistId: user.uid)
+            }
+            observeUnreadMessages()
+            observeInvitationStatusChanges()
+        }
     }
     
     func fetchArtworks() {
@@ -192,29 +224,36 @@ struct ArtistHomeView: View {
             return
         }
         let artistId = user.uid
+        print("DEBUG: Fetching artworks for artist: \(artistId)")
         let ref = Database.database().reference().child("artists").child(artistId).child("artworks")
         ref.observeSingleEvent(of: .value) { snapshot in
             var fetched: [Artwork] = []
             for child in snapshot.children {
                 if let snap = child as? DataSnapshot,
-                   let dict = snap.value as? [String: Any],
-                   let id = dict["id"] as? String,
-                   let title = dict["title"] as? String,
-                   let description = dict["description"] as? String,
-                   let category = dict["category"] as? String,
-                   let year = dict["year"] as? String,
-                   let price = dict["price"] as? String,
-                   let imageUrl = dict["imageUrl"] as? String,
-                   let artistId = dict["artistId"] as? String {
-                    let likes = dict["likes"] as? Int ?? 0
-                    let comments = dict["comments"] as? Int ?? 0
-                    let artwork = Artwork(id: id, artistId: artistId, title: title, description: description, category: category, year: year, price: price, imageUrl: imageUrl, likes: likes, comments: comments)
-                    fetched.append(artwork)
+                   let dict = snap.value as? [String: Any] {
+                    print("DEBUG: Processing artwork with data: \(dict)")
+                    if let id = dict["id"] as? String,
+                       let title = dict["title"] as? String,
+                       let description = dict["description"] as? String,
+                       let category = dict["category"] as? String,
+                       let year = dict["year"] as? String,
+                       let price = dict["price"] as? String,
+                       let imageUrl = dict["imageUrl"] as? String,
+                       let artistId = dict["artistId"] as? String {
+                        let likes = dict["likes"] as? Int ?? 0
+                        let comments = dict["comments"] as? Int ?? 0
+                        let artwork = Artwork(id: id, artistId: artistId, title: title, description: description, category: category, year: year, price: price, imageUrl: imageUrl, likes: likes, comments: comments)
+                        print("DEBUG: Created artwork object: \(artwork.title) with ID: \(artwork.id)")
+                        fetched.append(artwork)
+                    } else {
+                        print("DEBUG: Failed to create artwork object from data: \(dict)")
+                    }
                 }
             }
             DispatchQueue.main.async {
                 self.artworks = fetched
                 self.isLoading = false
+                print("DEBUG: Loaded \(fetched.count) artworks")
             }
         }
     }
@@ -239,367 +278,183 @@ struct ArtistHomeView: View {
             }
         }
     }
-}
+    
+    func observeUnreadMessages() {
+        guard let userId = Auth.auth().currentUser?.uid else { return }
+        let db = Database.database().reference()
+        db.child("chats").observe(.value) { snapshot in
+            var count = 0
+            let group = DispatchGroup()
+            for child in snapshot.children {
+                if let chatSnap = child as? DataSnapshot {
+                    let chatId = chatSnap.key
+                    let ids = chatId.components(separatedBy: "_")
+                    guard ids.contains(userId), ids.count == 2 else { continue }
+                    let otherUserId = ids.first { $0 != userId } ?? ""
+                    group.enter()
+                    // Try users first
+                    db.child("users").child(otherUserId).observeSingleEvent(of: .value) { userSnap in
+                        if let userDict = userSnap.value as? [String: Any], let role = userDict["role"] as? String {
+                            let otherUserRole = role.lowercased()
+                            print("[DEBUG] Found other user in users node: role=\(otherUserRole)")
+                            let messagesSnap = chatSnap.childSnapshot(forPath: "messages")
+                            for msgChild in messagesSnap.children {
+                                if let msgSnap = msgChild as? DataSnapshot,
+                                   let dict = msgSnap.value as? [String: Any],
+                                   let senderId = dict["sender"] as? String,
+                                   senderId == otherUserRole,
+                                   let isRead = dict["isRead"] as? Bool,
+                                   !isRead {
+                                    count += 1
+                                }
+                            }
+                            group.leave()
+                        } else {
+                            // Try admin if not found in users
+                            db.child("admin").child(otherUserId).observeSingleEvent(of: .value) { adminSnap in
+                                if let adminDict = adminSnap.value as? [String: Any], let role = adminDict["role"] as? String {
+                                    let otherUserRole = role.lowercased()
+                                    print("[DEBUG] Found other user in admin node: role=\(otherUserRole)")
+                                    let messagesSnap = chatSnap.childSnapshot(forPath: "messages")
+                                    for msgChild in messagesSnap.children {
+                                        if let msgSnap = msgChild as? DataSnapshot,
+                                           let dict = msgSnap.value as? [String: Any],
+                                           let senderId = dict["sender"] as? String,
+                                           senderId == otherUserRole,
+                                           let isRead = dict["isRead"] as? Bool,
+                                           !isRead {
+                                            count += 1
+                                        }
+                                    }
+                                    group.leave()
+                                } else {
+                                    // Try visitors last
+                                    db.child("visitors").child(otherUserId).observeSingleEvent(of: .value) { visitorSnap in
+                                        if let visitorDict = visitorSnap.value as? [String: Any], let role = visitorDict["role"] as? String {
+                                            let otherUserRole = role.lowercased()
+                                            print("[DEBUG] Found other user in visitors node: role=\(otherUserRole)")
+                                            let messagesSnap = chatSnap.childSnapshot(forPath: "messages")
+                                            for msgChild in messagesSnap.children {
+                                                if let msgSnap = msgChild as? DataSnapshot,
+                                                   let dict = msgSnap.value as? [String: Any],
+                                                   let senderId = dict["sender"] as? String,
+                                                   senderId == otherUserRole,
+                                                   let isRead = dict["isRead"] as? Bool,
+                                                   !isRead {
+                                                    count += 1
+                                                }
+                                            }
+                                            group.leave()
+                                        } else {
+                                            print("[DEBUG] Other user not found in users, admin, or visitors node.")
+                                            group.leave()
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            group.notify(queue: .main) {
+                unreadMessageCount = count
+            }
+        }
+    }
 
-struct UploadArtworkView: View {
-    var onUploadSuccess: () -> Void
-    @Environment(\.dismiss) private var dismiss
-    @State private var title = ""
-    @State private var description = ""
-    @State private var category = ""
-    @State private var year = ""
-    @State private var price = ""
-    @State private var selectedImage: PhotosPickerItem? = nil
-    @State private var artworkUIImage: UIImage? = nil
-    @State private var imageUrl: String = ""
-    @State private var isLoading = false
-    @State private var errorMessage = ""
-    @State private var showError = false
-    
-    var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack {
-                Button(action: { dismiss() }) {
-                    Image(systemName: "arrow.left.circle.fill")
-                        .resizable()
-                        .frame(width: 40, height: 40)
-                        .foregroundColor(.blue)
-                }
-                Spacer()
-            }
-            .padding(.top, 8)
-            
-            PhotosPicker(selection: $selectedImage, matching: .images) {
-                ZStack {
-                    if let image = artworkUIImage {
-                        Image(uiImage: image)
-                            .resizable()
-                            .scaledToFill()
-                            .frame(height: 200)
-                            .clipped()
-                            .cornerRadius(8)
-                    } else {
-                        Rectangle()
-                            .fill(Color.gray)
-                            .frame(height: 200)
-                            .cornerRadius(8)
-                    }
-                }
-            }
-            .onChange(of: selectedImage) { newItem in
-                if let newItem {
-                    Task {
-                        if let data = try? await newItem.loadTransferable(type: Data.self),
-                           let uiImage = UIImage(data: data) {
-                            artworkUIImage = uiImage
-                            uploadArtworkImage(data: data)
-                        }
-                    }
-                }
-            }
-            
-            Group {
-                TextField("Title", text: $title)
-                Divider()
-                TextField("Description", text: $description)
-                Divider()
-                TextField("Category (e.g., Painting)", text: $category)
-                Divider()
-                TextField("Year Created", text: $year)
-                Divider()
-                TextField("Price (optional)", text: $price)
-                Divider()
-            }
-            .padding(.horizontal, 4)
-            .foregroundColor(.gray)
-            
-            if showError {
-                Text(errorMessage)
-                    .foregroundColor(.red)
-            }
-            
-            Button(action: uploadArtwork) {
-                if isLoading {
-                    ProgressView()
-                        .progressViewStyle(CircularProgressViewStyle(tint: .white))
-                        .frame(maxWidth: .infinity)
-                        .padding()
-                        .background(Color.black)
-                        .cornerRadius(30)
-                } else {
-                    Text("Upload Artwork")
-                        .foregroundColor(.white)
-                        .frame(maxWidth: .infinity)
-                        .padding()
-                        .background(Color.black)
-                        .cornerRadius(30)
-                }
-            }
-            .padding(.top, 8)
-            .disabled(isLoading)
-            Spacer()
-        }
-        .padding()
-        .background(Color(.systemGray6).ignoresSafeArea())
-    }
-    
-    private func uploadArtworkImage(data: Data) {
-        let storageRef = Storage.storage().reference()
-        let fileName = "artwork_images/\(UUID().uuidString).jpg"
-        let imageRef = storageRef.child(fileName)
-        let metadata = StorageMetadata()
-        metadata.contentType = "image/jpeg"
-        imageRef.putData(data, metadata: metadata) { metadata, error in
-            if let error = error {
-                errorMessage = "Image upload error: \(error.localizedDescription)"
-                showError = true
-                return
-            }
-            imageRef.downloadURL { url, error in
-                if let url = url {
-                    imageUrl = url.absoluteString
-                }
+    // --- Notification Permission ---
+    func requestNotificationPermission() {
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .badge, .sound]) { granted, error in
+            if granted {
+                print("Notification permission granted")
+            } else {
+                print("Notification permission denied")
             }
         }
     }
-    
-    private func uploadArtwork() {
-        guard !title.isEmpty, !description.isEmpty, !category.isEmpty, !year.isEmpty, !imageUrl.isEmpty else {
-            errorMessage = "Please fill all required fields and select an image."
-            showError = true
-            return
-        }
-        isLoading = true
-        showError = false
-        guard let user = Auth.auth().currentUser else {
-            errorMessage = "Not logged in."
-            showError = true
-            isLoading = false
-            return
-        }
-        let artistId = user.uid
-        let dbRef = Database.database().reference()
-        let artworkId = UUID().uuidString
-        let artworkData: [String: Any] = [
-            "id": artworkId,
-            "artistId": artistId,
-            "title": title,
-            "description": description,
-            "category": category,
-            "year": year,
-            "price": price,
-            "imageUrl": imageUrl,
-            "likes": 0,
-            "comments": 0
-        ]
-        // Store under /artists/{artistId}/artworks
-        dbRef.child("artists").child(artistId).child("artworks").child(artworkId).setValue(artworkData) { error, _ in
-            if let error = error {
-                errorMessage = "Upload error: \(error.localizedDescription)"
-                showError = true
-                isLoading = false
-                return
-            }
-            // Store under /artworks
-            dbRef.child("artworks").child(artworkId).setValue(artworkData) { error, _ in
-                isLoading = false
-                if let error = error {
-                    errorMessage = "Upload error: \(error.localizedDescription)"
-                    showError = true
-                } else {
-                    onUploadSuccess()
-                    dismiss()
-                }
-            }
-        }
-    }
-}
 
-// EditArtworkView for editing an artwork
-struct EditArtworkView: View {
-    var artwork: Artwork
-    var onSave: () -> Void
-    @Environment(\.dismiss) private var dismiss
-    @State private var title: String
-    @State private var description: String
-    @State private var category: String
-    @State private var year: String
-    @State private var price: String
-    @State private var imageUrl: String
-    @State private var selectedImage: PhotosPickerItem? = nil
-    @State private var artworkUIImage: UIImage? = nil
-    @State private var isLoading = false
-    @State private var errorMessage = ""
-    @State private var showError = false
-    
-    init(artwork: Artwork, onSave: @escaping () -> Void) {
-        self.artwork = artwork
-        self.onSave = onSave
-        _title = State(initialValue: artwork.title)
-        _description = State(initialValue: artwork.description)
-        _category = State(initialValue: artwork.category)
-        _year = State(initialValue: artwork.year)
-        _price = State(initialValue: artwork.price)
-        _imageUrl = State(initialValue: artwork.imageUrl)
-    }
-    
-    var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack {
-                Button(action: { dismiss() }) {
-                    Image(systemName: "arrow.left.circle.fill")
-                        .resizable()
-                        .frame(width: 40, height: 40)
-                        .foregroundColor(.blue)
-                }
-                Spacer()
-            }
-            .padding(.top, 8)
-            PhotosPicker(selection: $selectedImage, matching: .images) {
-                ZStack {
-                    if let image = artworkUIImage {
-                        Image(uiImage: image)
-                            .resizable()
-                            .scaledToFill()
-                            .frame(height: 200)
-                            .clipped()
-                            .cornerRadius(8)
-                    } else if let url = URL(string: imageUrl) {
-                        ZStack {
-                            Color.gray.opacity(0.2)
-                            KFImage(url)
-                                .resizable()
-                                .aspectRatio(contentMode: .fill)
-                        }
-                        .frame(height: 200)
-                        .clipped()
-                        .cornerRadius(8)
-                    } else {
-                        Rectangle()
-                            .fill(Color.gray)
-                            .frame(height: 200)
-                            .cornerRadius(8)
-                    }
-                }
-            }
-            .onChange(of: selectedImage) { newItem in
-                if let newItem {
-                    Task {
-                        if let data = try? await newItem.loadTransferable(type: Data.self),
-                           let uiImage = UIImage(data: data) {
-                            artworkUIImage = uiImage
-                            uploadArtworkImage(data: data)
+    // --- Invitation Status Check ---
+    func checkInvitationStatusOnce(artistId: String) {
+        print("Checking invitation status for artist: \(artistId)")
+        let invitationsRef = Database.database().reference().child("invitations")
+        let eventsRef = Database.database().reference().child("events")
+        let userDefaults = UserDefaults.standard
+
+        invitationsRef.observeSingleEvent(of: .value) { snapshot in
+            for child in snapshot.children {
+                guard let eventSnap = child as? DataSnapshot else { continue }
+                let eventId = eventSnap.key
+                if eventSnap.hasChild(artistId) {
+                    let artistInvite = eventSnap.childSnapshot(forPath: artistId)
+                    let status = artistInvite.childSnapshot(forPath: "status").value as? String ?? ""
+                    let lastStatusKey = "invitation_status_\(eventId)"
+                    let lastStatus = userDefaults.string(forKey: lastStatusKey) ?? ""
+                    print("Found status: \(status) for event: \(eventId), lastStatus: \(lastStatus)")
+                    if !status.isEmpty && status != lastStatus {
+                        userDefaults.set(status, forKey: lastStatusKey)
+                        // Fetch event name
+                        eventsRef.child(eventId).child("title").observeSingleEvent(of: .value) { eventTitleSnap in
+                            let eventName = eventTitleSnap.value as? String
+                            print("Triggering notification for status: \(status), event: \(eventName ?? "")")
+                            showStatusNotification(status: status, eventName: eventName)
                         }
                     }
                 }
             }
-            Group {
-                TextField("Title", text: $title)
-                Divider()
-                TextField("Description", text: $description)
-                Divider()
-                TextField("Category (e.g., Painting)", text: $category)
-                Divider()
-                TextField("Year Created", text: $year)
-                Divider()
-                TextField("Price (optional)", text: $price)
-                Divider()
-            }
-            .padding(.horizontal, 4)
-            .foregroundColor(.gray)
-            if showError {
-                Text(errorMessage)
-                    .foregroundColor(.red)
-            }
-            Button(action: saveArtwork) {
-                if isLoading {
-                    ProgressView()
-                        .progressViewStyle(CircularProgressViewStyle(tint: .white))
-                        .frame(maxWidth: .infinity)
-                        .padding()
-                        .background(Color.black)
-                        .cornerRadius(30)
-                } else {
-                    Text("Save")
-                        .foregroundColor(.white)
-                        .frame(maxWidth: .infinity)
-                        .padding()
-                        .background(Color.black)
-                        .cornerRadius(30)
-                }
-            }
-            .padding(.top, 8)
-            .disabled(isLoading)
-            Spacer()
         }
-        .padding()
-        .background(Color(.systemGray6).ignoresSafeArea())
     }
-    private func uploadArtworkImage(data: Data) {
-        let storageRef = Storage.storage().reference()
-        let fileName = "artwork_images/\(UUID().uuidString).jpg"
-        let imageRef = storageRef.child(fileName)
-        let metadata = StorageMetadata()
-        metadata.contentType = "image/jpeg"
-        imageRef.putData(data, metadata: metadata) { metadata, error in
+
+    func showStatusNotification(status: String, eventName: String?) {
+        print("showStatusNotification called with status: \(status), eventName: \(eventName ?? "nil")")
+        let content = UNMutableNotificationContent()
+        content.title = "Event Application Update"
+        if status == "accepted" {
+            content.body = "Congratulations! You were accepted to the event" + (eventName != nil ? ": \(eventName!)" : "")
+        } else if status == "rejected" {
+            content.body = "Sorry, your application was rejected." + (eventName != nil ? ": \(eventName!)" : "")
+        } else {
+            print("Status is neither accepted nor rejected, skipping notification.")
+            return
+        }
+        content.sound = .default
+
+        let request = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
+        UNUserNotificationCenter.current().add(request, withCompletionHandler: { error in
             if let error = error {
-                errorMessage = "Image upload error: \(error.localizedDescription)"
-                showError = true
-                return
+                print("Failed to schedule notification: \(error.localizedDescription)")
+            } else {
+                print("Notification scheduled successfully.")
             }
-            imageRef.downloadURL { url, error in
-                if let url = url {
-                    imageUrl = url.absoluteString
-                }
-            }
-        }
+        })
     }
-    private func saveArtwork() {
-        guard !title.isEmpty, !description.isEmpty, !category.isEmpty, !year.isEmpty, !imageUrl.isEmpty else {
-            errorMessage = "Please fill all required fields and select an image."
-            showError = true
-            return
-        }
-        isLoading = true
-        showError = false
-        guard let user = Auth.auth().currentUser else {
-            errorMessage = "Not logged in."
-            showError = true
-            isLoading = false
-            return
-        }
+
+    func observeInvitationStatusChanges() {
+        guard let user = Auth.auth().currentUser else { return }
         let artistId = user.uid
-        let dbRef = Database.database().reference()
-        let artworkId = artwork.id
-        let artworkData: [String: Any] = [
-            "id": artworkId,
-            "artistId": artistId,
-            "title": title,
-            "description": description,
-            "category": category,
-            "year": year,
-            "price": price,
-            "imageUrl": imageUrl,
-            "likes": artwork.likes,
-            "comments": artwork.comments
-        ]
-        dbRef.child("artists").child(artistId).child("artworks").child(artworkId).setValue(artworkData) { error, _ in
-            if let error = error {
-                errorMessage = "Save error: \(error.localizedDescription)"
-                showError = true
-                isLoading = false
-                return
-            }
-            dbRef.child("artworks").child(artworkId).setValue(artworkData) { error, _ in
-                isLoading = false
-                if let error = error {
-                    errorMessage = "Save error: \(error.localizedDescription)"
-                    showError = true
-                } else {
-                    onSave()
-                    dismiss()
+        let invitationsRef = Database.database().reference().child("invitations")
+        invitationsRef.observe(.value) { snapshot in
+            var newStatuses: [String: String] = [:]
+            for eventChild in snapshot.children {
+                if let eventSnap = eventChild as? DataSnapshot {
+                    let eventId = eventSnap.key
+                    let artistSnap = eventSnap.childSnapshot(forPath: artistId)
+                    if artistSnap.exists(),
+                       let dict = artistSnap.value as? [String: Any],
+                       let status = dict["status"] as? String {
+                        newStatuses[eventId] = status
+                        let lastStatus = lastInvitationStatuses[eventId]
+                        if lastStatus != nil && lastStatus != status {
+                            // Only notify if status changed
+                            if status.lowercased() == "accepted" {
+                                showStatusNotification(status: "accepted", eventName: eventId)
+                            } else if status.lowercased() == "rejected" {
+                                showStatusNotification(status: "rejected", eventName: eventId)
+                            }
+                        }
+                    }
                 }
             }
+            lastInvitationStatuses = newStatuses
         }
     }
 }
@@ -609,6 +464,9 @@ struct ArtistAccountView: View {
     var onBack: () -> Void
     var onProfile: () -> Void
     @State private var username: String = Auth.auth().currentUser?.email ?? "Artist"
+    @State private var showApplyForEvent = false
+    @State private var showStatus = false
+    @State private var showSettings = false
     var body: some View {
         VStack(spacing: 0) {
             HStack {
@@ -638,13 +496,17 @@ struct ArtistAccountView: View {
                     ArtistAccountRow(icon: "person.crop.circle", label: "Profile")
                 }
                 Divider()
-                ArtistAccountRow(icon: "heart", label: "Favourites")
+                Button(action: { showApplyForEvent = true }) {
+                    ArtistAccountRow(icon: "ticket", label: "Apply For Event")
+                }
                 Divider()
-                ArtistAccountRow(icon: "ticket", label: "Apply For Event")
+                Button(action: { showStatus = true }) {
+                    ArtistAccountRow(icon: "sparkle", label: "Status")
+                }
                 Divider()
-                ArtistAccountRow(icon: "sparkle", label: "Status")
-                Divider()
-                ArtistAccountRow(icon: "gearshape", label: "Settings")
+                Button(action: { showSettings = true }) {
+                    ArtistAccountRow(icon: "gearshape", label: "Settings")
+                }
             }
             .background(Color.white)
             .cornerRadius(12)
@@ -664,6 +526,18 @@ struct ArtistAccountView: View {
             .padding(.bottom, 16)
         }
         .background(Color.white.ignoresSafeArea())
+        .sheet(isPresented: $showApplyForEvent) {
+            ApplyForEventView(onClose: { showApplyForEvent = false })
+        }
+        .sheet(isPresented: $showStatus) {
+            ArtistStatusView()
+        }
+        .sheet(isPresented: $showSettings) {
+            SettingsView(
+                currentUserRole: "artist",
+                currentUserName: username
+            )
+        }
     }
 }
 
@@ -892,14 +766,19 @@ struct ArtistProfileView: View {
             return
         }
         let uid = user.uid
-        let ref = Database.database().reference().child("artists").child(uid).child("profile")
+        let ref = Database.database().reference().child("artists").child(uid)
         ref.observeSingleEvent(of: .value) { snapshot in
             if let dict = snapshot.value as? [String: Any] {
-                self.username = dict["username"] as? String ?? user.email?.components(separatedBy: "@").first ?? "Artist"
+                self.username = dict["name"] as? String ?? user.email?.components(separatedBy: "@").first ?? "Artist"
                 self.email = dict["email"] as? String ?? user.email ?? ""
                 self.bio = dict["bio"] as? String ?? ""
-                self.socialLink1 = dict["socialLink1"] as? String ?? ""
-                self.socialLink2 = dict["socialLink2"] as? String ?? ""
+                if let socialLinks = dict["socialLinks"] as? [String: Any] {
+                    self.socialLink1 = socialLinks["instagram"] as? String ?? ""
+                    self.socialLink2 = socialLinks["website"] as? String ?? ""
+                } else {
+                    self.socialLink1 = ""
+                    self.socialLink2 = ""
+                }
                 self.profileImageUrl = dict["profileImageUrl"] as? String
             } else {
                 self.username = user.email?.components(separatedBy: "@").first ?? "Artist"
@@ -922,16 +801,18 @@ struct ArtistProfileView: View {
             return
         }
         let uid = user.uid
-        let ref = Database.database().reference().child("artists").child(uid).child("profile")
-        let profileData: [String: Any] = [
-            "username": username,
+        let ref = Database.database().reference().child("artists").child(uid)
+        let artistData: [String: Any] = [
+            "name": username,
             "email": email,
             "bio": bio,
-            "socialLink1": socialLink1,
-            "socialLink2": socialLink2,
-            "profileImageUrl": profileImageUrl ?? ""
+            "profileImageUrl": profileImageUrl ?? "",
+            "socialLinks": [
+                "instagram": socialLink1,
+                "website": socialLink2
+            ]
         ]
-        ref.setValue(profileData) { error, _ in
+        ref.updateChildValues(artistData) { error, _ in
             isSaving = false
             if let error = error {
                 errorMessage = "Save error: \(error.localizedDescription)"
@@ -997,11 +878,11 @@ struct ArtistNameView: View {
     }
     
     func fetchArtistName() {
-        let ref = Database.database().reference().child("artists").child(artistId).child("profile")
+        let ref = Database.database().reference().child("artists").child(artistId)
         ref.observeSingleEvent(of: .value) { snapshot in
             DispatchQueue.main.async {
                 if let dict = snapshot.value as? [String: Any],
-                   let name = dict["username"] as? String,
+                   let name = dict["name"] as? String,
                    !name.trimmingCharacters(in: .whitespaces).isEmpty {
                     artistName = name
                 } else {
@@ -1018,6 +899,185 @@ struct ArtistNameView: View {
     }
 }
 
+struct ArtistArtworkCard: View {
+    let artwork: Artwork
+    let onEdit: () -> Void
+    @State private var likesCount: Int = 0
+    @State private var comments: [ArtworkComment] = []
+    @State private var showComments = false
+    @State private var newComment: String = ""
+    @State private var commentsCount: Int = 0
+    @State private var showError = false
+    @State private var errorMessage = ""
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ZStack {
+                Color.gray.opacity(0.2)
+                KFImage(URL(string: artwork.imageUrl))
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+            }
+            .frame(height: 200)
+            .cornerRadius(12)
+            .clipped()
+            .contentShape(Rectangle())
+            .onTapGesture { onEdit() }
+
+            Text(artwork.title)
+                .font(.headline)
+                .fontWeight(.bold)
+                .contentShape(Rectangle())
+                .onTapGesture { onEdit() }
+
+            ArtistNameView(artistId: artwork.artistId)
+
+            HStack(spacing: 20) {
+                HStack(spacing: 4) {
+                    Image(systemName: "heart.fill")
+                        .foregroundColor(.red)
+                    Text("\(likesCount)")
+                        .foregroundColor(.black)
+                }
+                Button(action: {
+                    showComments = true
+                }) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "bubble.right")
+                            .foregroundColor(.blue)
+                        Text("\(commentsCount)")
+                            .foregroundColor(.black)
+                    }
+                }
+                .buttonStyle(BorderlessButtonStyle())
+                .contentShape(Rectangle())
+            }
+            .font(.subheadline)
+            .padding(.top, 4)
+        }
+        .padding()
+        .background(Color.white)
+        .cornerRadius(16)
+        .shadow(radius: 2)
+        .padding(.horizontal)
+        .onAppear {
+            fetchLikes()
+            fetchComments()
+        }
+        .sheet(isPresented: $showComments) {
+            CommentsSheet(artworkId: artwork.id, comments: $comments, newComment: $newComment, onSend: addComment)
+        }
+        .alert("Error", isPresented: $showError) {
+            Button("OK", role: .cancel) { }
+        } message: {
+            Text(errorMessage)
+        }
+    }
+    
+    private func initializeArtworkInteractions(completion: @escaping (Bool) -> Void) {
+        let dbRef = Database.database().reference()
+        let interactionsRef = dbRef.child("artworkInteractions").child(artwork.id)
+        
+        print("DEBUG: Checking interactions for artwork: \(artwork.title)")
+        interactionsRef.observeSingleEvent(of: .value) { snapshot in
+            print("DEBUG: Snapshot exists for \(artwork.title): \(snapshot.exists())")
+            if !snapshot.exists() {
+                print("DEBUG: Initializing interactions for \(artwork.title)")
+                // Initialize the node with empty likes and comments
+                let initialData: [String: Any] = [
+                    "likes": [:],
+                    "comments": [:]
+                ]
+                interactionsRef.setValue(initialData) { error, _ in
+                    if let error = error {
+                        print("DEBUG: Error initializing interactions for \(artwork.title): \(error.localizedDescription)")
+                        completion(false)
+                    } else {
+                        print("DEBUG: Successfully initialized interactions for \(artwork.title)")
+                        completion(true)
+                    }
+                }
+            } else {
+                print("DEBUG: Interactions already exist for \(artwork.title)")
+                completion(true)
+            }
+        }
+    }
+    
+    func fetchLikes() {
+        let likesRef = Database.database().reference().child("artworkInteractions").child(artwork.id).child("likes")
+        likesRef.observe(.value) { snapshot in
+            likesCount = Int(snapshot.childrenCount)
+            print("DEBUG: Fetched likes for \(artwork.title): \(likesCount)")
+        }
+    }
+    
+    func fetchComments() {
+        let commentsRef = Database.database().reference().child("artworkInteractions").child(artwork.id).child("comments")
+        commentsRef.observe(.value) { snapshot in
+            let loaded = parseComments(snapshot: snapshot)
+            comments = loaded.sorted { $0.timestamp < $1.timestamp }
+            commentsCount = loaded.count
+            print("DEBUG: Fetched comments for \(artwork.title): \(commentsCount)")
+        }
+    }
+    
+    // Recursive function to parse comments and their replies
+    private func parseComments(snapshot: DataSnapshot, parentId: String? = nil) -> [ArtworkComment] {
+        var result: [ArtworkComment] = []
+        for child in snapshot.children {
+            if let snap = child as? DataSnapshot,
+               let dict = snap.value as? [String: Any] {
+                // Support both 'comment' and 'text' for the main text
+                let mainText = dict["comment"] as? String ?? dict["text"] as? String
+                let timestamp = dict["timestamp"] as? Double
+                let userId = dict["userId"] as? String
+                if let mainText = mainText, let timestamp = timestamp, let userId = userId {
+                var replies: [ArtworkComment] = []
+                let repliesSnap = snap.childSnapshot(forPath: "replies")
+                if repliesSnap.exists() {
+                    replies = parseComments(snapshot: repliesSnap, parentId: snap.key)
+                }
+                let commentObj = ArtworkComment(
+                    id: snap.key,
+                        comment: mainText,
+                    timestamp: timestamp,
+                    userId: userId,
+                    parentId: parentId,
+                    replies: replies
+                )
+                result.append(commentObj)
+                }
+            }
+        }
+        return result
+    }
+    
+    func addComment() {
+        guard let user = Auth.auth().currentUser, !newComment.trimmingCharacters(in: .whitespaces).isEmpty else { return }
+        let userId = user.uid
+        let commentId = UUID().uuidString
+        let timestamp = Date().timeIntervalSince1970 * 1000
+        let commentData: [String: Any] = [
+            "comment": newComment,
+            "timestamp": timestamp,
+            "userId": userId
+        ]
+        let commentsRef = Database.database().reference().child("artworkInteractions").child(artwork.id).child("comments").child(commentId)
+        commentsRef.setValue(commentData) { error, _ in
+            if error == nil {
+                newComment = ""
+                commentsCount += 1
+                print("DEBUG: Successfully added comment to \(artwork.title)")
+            } else {
+                errorMessage = "Failed to add comment. Please try again."
+                showError = true
+                print("DEBUG: Error adding comment to \(artwork.title): \(error?.localizedDescription ?? "unknown error")")
+            }
+        }
+    }
+}
+
 #Preview {
     ArtistHomeView(onLogout: {})
-}
+} 

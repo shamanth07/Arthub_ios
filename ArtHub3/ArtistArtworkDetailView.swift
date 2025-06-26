@@ -195,3 +195,4 @@ struct ArtistArtworkDetailView: View {
         }
     }
 }
+

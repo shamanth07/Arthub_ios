@@ -29,6 +29,8 @@ struct EditEventView: View {
     @FocusState private var searchFieldFocused: Bool
     @State private var selectedBannerImage: PhotosPickerItem? = nil
     @State private var bannerUIImage: UIImage? = nil
+    @State private var placeSuggestions: [PlaceSuggestion] = []
+    @State private var isFetchingSuggestions = false
     
     init(event: Event, onEventUpdated: @escaping () -> Void) {
         self.event = event
@@ -106,7 +108,14 @@ struct EditEventView: View {
                         DatePicker("Event Date", selection: $eventDate, in: Date()..., displayedComponents: .date)
                             .datePickerStyle(.graphical)
                         
-                        TextField("Time (e.g., 7:00 PM)", text: $time)
+                        TextField("Time (e.g., 14:30)", text: $time)
+                            .onChange(of: time) { newValue in
+                                // Filter to only allow numbers and colons
+                                let filtered = newValue.filter { $0.isNumber || $0 == ":" }
+                                if filtered != newValue {
+                                    time = filtered
+                                }
+                            }
                             .textFieldStyle(RoundedBorderTextFieldStyle())
                         
                         // Location Search
@@ -114,29 +123,30 @@ struct EditEventView: View {
                             Text("Location")
                                 .font(.headline)
                             
-                            HStack {
-                                Image(systemName: "magnifyingglass")
-                                TextField("Search location", text: $searchQuery)
-                                    .focused($searchFieldFocused)
-                                    .onSubmit(searchLocation)
-                            }
-                            .textFieldStyle(RoundedBorderTextFieldStyle())
+                            TextField("Search location", text: $searchQuery)
+                                .textFieldStyle(RoundedBorderTextFieldStyle())
+                                .focused($searchFieldFocused)
+                                .onChange(of: searchQuery) { newValue in
+                                    if !newValue.isEmpty {
+                                        fetchPlaceSuggestions(query: newValue)
+                                    } else {
+                                        placeSuggestions = []
+                                    }
+                                }
                             
-                            if !searchResults.isEmpty && searchFieldFocused {
+                            if !placeSuggestions.isEmpty {
                                 ScrollView {
                                     VStack(alignment: .leading, spacing: 0) {
-                                        ForEach(searchResults, id: \.self) { item in
+                                        ForEach(placeSuggestions) { suggestion in
                                             Button(action: {
-                                                selectLocation(item)
+                                                selectPlaceSuggestion(suggestion)
                                             }) {
                                                 VStack(alignment: .leading) {
-                                                    Text(item.name ?? "Unknown Location")
+                                                    Text(suggestion.mainText)
                                                         .font(.subheadline)
-                                                    if let address = item.placemark.title {
-                                                        Text(address)
-                                                            .font(.caption)
-                                                            .foregroundColor(.gray)
-                                                    }
+                                                    Text(suggestion.secondaryText)
+                                                        .font(.caption)
+                                                        .foregroundColor(.gray)
                                                 }
                                                 .padding(.vertical, 8)
                                                 .padding(.horizontal, 12)
@@ -204,28 +214,71 @@ struct EditEventView: View {
         }
     }
     
-    private func searchLocation() {
-        let request = MKLocalSearch.Request()
-        request.naturalLanguageQuery = searchQuery
-        let search = MKLocalSearch(request: request)
-        search.start { response, error in
+    private func fetchPlaceSuggestions(query: String) {
+        guard !query.isEmpty else { return }
+        isFetchingSuggestions = true
+        let apiKey = "AIzaSyC6AHrBrs9ygRQWjaOKCVKdFQLKcrUJPoo"
+        let urlString = "https://maps.googleapis.com/maps/api/place/autocomplete/json?input=\(query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "")&key=\(apiKey)"
+        print("Requesting: \(urlString)")
+        guard let url = URL(string: urlString) else { return }
+        URLSession.shared.dataTask(with: url) { data, response, error in
+            defer { isFetchingSuggestions = false }
             if let error = error {
-                print("Location search error: \(error.localizedDescription)")
+                print("Error: \(error)")
                 return
             }
-            searchResults = response?.mapItems ?? []
-        }
+            guard let data = data else {
+                print("No data received")
+                return
+            }
+            if let jsonString = String(data: data, encoding: .utf8) {
+                print("Response: \(jsonString)")
+            }
+            if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let predictions = json["predictions"] as? [[String: Any]] {
+                let suggestions = predictions.compactMap { prediction -> PlaceSuggestion? in
+                    guard let placeId = prediction["place_id"] as? String,
+                          let structuredFormatting = prediction["structured_formatting"] as? [String: Any],
+                          let mainText = structuredFormatting["main_text"] as? String,
+                          let secondaryText = structuredFormatting["secondary_text"] as? String else {
+                        return nil
+                    }
+                    return PlaceSuggestion(placeId: placeId, mainText: mainText, secondaryText: secondaryText)
+                }
+                DispatchQueue.main.async {
+                    self.placeSuggestions = suggestions
+                }
+            }
+        }.resume()
     }
     
-    private func selectLocation(_ item: MKMapItem) {
-        if let coordinate = item.placemark.location?.coordinate {
-            region.center = coordinate
-            latitude = coordinate.latitude
-            longitude = coordinate.longitude
-            location = item.placemark.title ?? ""
-            searchResults = []
-            searchFieldFocused = false
-        }
+    private func selectPlaceSuggestion(_ suggestion: PlaceSuggestion) {
+        location = suggestion.mainText + ", " + suggestion.secondaryText
+        searchQuery = location
+        placeSuggestions = []
+        searchFieldFocused = false
+        // Fetch coordinates for the placeId and update the map
+        let apiKey = "AIzaSyC6AHrBrs9ygRQWjaOKCVKdFQLKcrUJPoo"
+        let urlString = "https://maps.googleapis.com/maps/api/place/details/json?place_id=\(suggestion.placeId)&key=\(apiKey)"
+        guard let url = URL(string: urlString) else { return }
+        URLSession.shared.dataTask(with: url) { data, response, error in
+            guard let data = data, error == nil else { return }
+            if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let result = json["result"] as? [String: Any],
+               let geometry = result["geometry"] as? [String: Any],
+               let loc = geometry["location"] as? [String: Any],
+               let lat = loc["lat"] as? Double,
+               let lng = loc["lng"] as? Double {
+                DispatchQueue.main.async {
+                    latitude = lat
+                    longitude = lng
+                    region = MKCoordinateRegion(
+                        center: CLLocationCoordinate2D(latitude: lat, longitude: lng),
+                        span: MKCoordinateSpan(latitudeDelta: 0.01, longitudeDelta: 0.01)
+                    )
+                }
+            }
+        }.resume()
     }
     
     private func uploadBannerImage(data: Data) {
@@ -290,6 +343,13 @@ struct EditEventView: View {
 struct MapPin: Identifiable {
     let id = UUID()
     let coordinate: CLLocationCoordinate2D
+}
+
+struct PlaceSuggestion: Identifiable {
+    let id = UUID()
+    let placeId: String
+    let mainText: String
+    let secondaryText: String
 }
 
 #Preview {

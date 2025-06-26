@@ -144,3 +144,4 @@ struct MessageSendersListView: View {
         }
     }
 }
+
