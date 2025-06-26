@@ -7,6 +7,7 @@ import Kingfisher
 
 struct CreateEventView: View {
     var onEventCreated: () -> Void
+    @Environment(\.dismiss) private var dismiss
     @State private var title = ""
     @State private var description = ""
     @State private var eventDate = Date()
@@ -31,11 +32,23 @@ struct CreateEventView: View {
     // Image picker state
     @State private var selectedBannerImage: PhotosPickerItem? = nil
     @State private var bannerUIImage: UIImage? = nil
+    @State private var placeSuggestions: [PlaceSuggestion] = []
+    @State private var isFetchingSuggestions = false
+    @State private var placeError: String? = nil
     
     var body: some View {
         NavigationView {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
+                    HStack {
+                        Button(action: { dismiss() }) {
+                            Image(systemName: "arrow.left")
+                                .font(.title2)
+                                .foregroundColor(.blue)
+                        }
+                        Spacer()
+                    }
+                    .padding(.horizontal)
                     Text("Create Event")
                         .font(.title2)
                         .fontWeight(.bold)
@@ -86,43 +99,51 @@ struct CreateEventView: View {
                     DatePicker("", selection: $eventDate, in: Date()..., displayedComponents: .date)
                         .datePickerStyle(.graphical)
                         .padding(.horizontal)
-                    TextField("Enter Time", text: $time)
+                    TextField("Enter Time (e.g., 14:30)", text: $time)
+                        .onChange(of: time) { newValue in
+                            // Filter to only allow numbers and colons
+                            let filtered = newValue.filter { $0.isNumber || $0 == ":" }
+                            if filtered != newValue {
+                                time = filtered
+                            }
+                        }
                         .padding(.horizontal)
                         .padding(.vertical, 8)
                     Divider().padding(.horizontal)
                     // Search bar and map
                     HStack {
                         Image(systemName: "magnifyingglass")
-                        TextField("Search", text: $searchQuery, onCommit: searchLocation)
-                            .focused($searchFieldFocused)
-                            .submitLabel(.search)
+                        TextField("Search", text: $searchQuery, onEditingChanged: { editing in
+                            if editing { fetchPlaceSuggestions() }
+                        })
+                        .focused($searchFieldFocused)
+                        .onChange(of: searchQuery) { newValue in
+                            fetchPlaceSuggestions()
+                        }
+                        .submitLabel(.search)
                     }
                     .padding(.horizontal)
                     .padding(.vertical, 8)
                     .background(Color.gray.opacity(0.1))
                     .cornerRadius(8)
                     .padding(.horizontal)
-                    if !searchResults.isEmpty && searchFieldFocused {
+                    if let placeError = placeError {
+                        Text(placeError)
+                            .foregroundColor(.red)
+                            .padding(.horizontal)
+                    }
+                    if !placeSuggestions.isEmpty && searchFieldFocused {
                         VStack(alignment: .leading, spacing: 0) {
-                            ForEach(Array(searchResults.enumerated()), id: \.offset) { index, item in
+                            ForEach(placeSuggestions, id: \.placeId) { suggestion in
                                 Button(action: {
-                                    if let coordinate = item.placemark.location?.coordinate {
-                                        region.center = coordinate
-                                        latitude = coordinate.latitude
-                                        longitude = coordinate.longitude
-                                        location = item.placemark.title ?? ""
-                                        searchResults = []
-                                        searchFieldFocused = false
-                                    }
+                                    selectPlaceSuggestion(suggestion)
                                 }) {
                                     VStack(alignment: .leading) {
-                                        Text(item.name ?? "Unknown")
+                                        Text(suggestion.mainText)
                                             .fontWeight(.medium)
-                                        if let subtitle = item.placemark.title {
-                                            Text(subtitle)
-                                                .font(.caption)
-                                                .foregroundColor(.gray)
-                                        }
+                                        Text(suggestion.secondaryText)
+                                            .font(.caption)
+                                            .foregroundColor(.gray)
                                     }
                                     .padding(.vertical, 6)
                                     .padding(.horizontal)
@@ -259,6 +280,92 @@ struct CreateEventView: View {
                 onEventCreated()
             }
         }
+    }
+    
+    struct PlaceSuggestion: Identifiable {
+        let id = UUID()
+        let placeId: String
+        let mainText: String
+        let secondaryText: String
+    }
+    
+    func fetchPlaceSuggestions() {
+        guard !searchQuery.isEmpty else {
+            placeSuggestions = []
+            placeError = nil
+            return
+        }
+        isFetchingSuggestions = true
+        let apiKey = "AIzaSyC6AHrBrs9ygRQWjaOKCVKdFQLKcrUJPoo"
+        let input = searchQuery.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
+        let urlString = "https://maps.googleapis.com/maps/api/place/autocomplete/json?input=\(input)&key=\(apiKey)"
+        print("Requesting: \(urlString)")
+        guard let url = URL(string: urlString) else { placeError = "Invalid URL"; return }
+        URLSession.shared.dataTask(with: url) { data, response, error in
+            isFetchingSuggestions = false
+            if let error = error {
+                print("Error: \(error)")
+                DispatchQueue.main.async { placeError = error.localizedDescription }
+                return
+            }
+            guard let data = data else {
+                print("No data received")
+                DispatchQueue.main.async { placeError = "No data received" }
+                return
+            }
+            if let jsonString = String(data: data, encoding: .utf8) {
+                print("Response: \(jsonString)")
+            }
+            if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                if let status = json["status"] as? String, status != "OK" {
+                    let errorMsg = json["error_message"] as? String ?? status
+                    DispatchQueue.main.async { placeError = "Google Places error: \(errorMsg)" }
+                    return
+                }
+                if let predictions = json["predictions"] as? [[String: Any]] {
+                    let suggestions = predictions.compactMap { pred -> PlaceSuggestion? in
+                        guard let placeId = pred["place_id"] as? String,
+                              let structured = pred["structured_formatting"] as? [String: Any],
+                              let mainText = structured["main_text"] as? String,
+                              let secondaryText = structured["secondary_text"] as? String else { return nil }
+                        return PlaceSuggestion(placeId: placeId, mainText: mainText, secondaryText: secondaryText)
+                    }
+                    DispatchQueue.main.async {
+                        placeSuggestions = suggestions
+                        placeError = nil
+                    }
+                }
+            }
+        }.resume()
+    }
+    
+    func selectPlaceSuggestion(_ suggestion: PlaceSuggestion) {
+        location = suggestion.mainText + ", " + suggestion.secondaryText
+        searchQuery = location
+        placeSuggestions = []
+        searchFieldFocused = false
+        // Fetch coordinates for the placeId and update the map
+        let apiKey = "AIzaSyCpTZHMTCavJXGpyeBJKXiAVrSQWtrcwts"
+        let urlString = "https://maps.googleapis.com/maps/api/place/details/json?place_id=\(suggestion.placeId)&key=\(apiKey)"
+        guard let url = URL(string: urlString) else { return }
+        URLSession.shared.dataTask(with: url) { data, response, error in
+            guard let data = data, error == nil else { return }
+            if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let result = json["result"] as? [String: Any],
+               let geometry = result["geometry"] as? [String: Any],
+               let loc = geometry["location"] as? [String: Any],
+               let lat = loc["lat"] as? Double,
+               let lng = loc["lng"] as? Double {
+                DispatchQueue.main.async {
+                    latitude = lat
+                    longitude = lng
+                    region = MKCoordinateRegion(
+                        center: CLLocationCoordinate2D(latitude: lat, longitude: lng),
+                        span: MKCoordinateSpan(latitudeDelta: 0.01, longitudeDelta: 0.01)
+                    )
+                }
+            }
+        }.resume()
     }
 }
 
