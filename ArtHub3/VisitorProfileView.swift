@@ -20,6 +20,9 @@ struct VisitorProfileView: View {
     @State private var errorMessage: String? = nil
     @Environment(\.presentationMode) var presentationMode
     @State private var showChangePasswordSheet = false
+
+    @State private var adminId: String = ""
+    @State private var adminEmail: String = ""
     
     var body: some View {
         VStack(spacing: 0) {
@@ -107,6 +110,11 @@ struct VisitorProfileView: View {
             }
             .padding(.horizontal)
             Spacer()
+
+            NavigationLink(destination: LiveChatView(chatUserId: Auth.auth().currentUser?.uid ?? "", chatUserEmail: adminEmail, chatUserRole: "admin")) {
+                Text("Live Chat")
+            }
+
         }
         .background(Color(.systemGray6).ignoresSafeArea())
         .sheet(isPresented: $showImagePicker) {
@@ -145,7 +153,14 @@ struct VisitorProfileView: View {
         .alert(isPresented: $showPasswordAlert) {
             Alert(title: Text("Password Change"), message: Text(passwordChangeMessage), dismissButton: .default(Text("OK")))
         }
+
+        .onAppear {
+            fetchProfile()
+            fetchAdminInfo()
+        }
+
         .onAppear(perform: fetchProfile)
+
     }
     
     func fetchProfile() {
@@ -223,6 +238,22 @@ struct VisitorProfileView: View {
             newPassword = ""
         }
     }
+
+
+    func fetchAdminInfo() {
+        let adminRef = Database.database().reference().child("admin")
+        adminRef.observeSingleEvent(of: .value) { snapshot in
+            for child in snapshot.children {
+                if let snap = child as? DataSnapshot,
+                   let dict = snap.value as? [String: Any] {
+                    self.adminId = snap.key
+                    self.adminEmail = dict["email"] as? String ?? ""
+                    break // Use the first admin found
+                }
+            }
+        }
+    }
+
 }
 
 struct ImageLoaderView: View {
