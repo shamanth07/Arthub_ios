@@ -121,3 +121,4 @@ struct RegisterView: View {
 #Preview {
     RegisterView(onSignIn: {}, onRegisterSuccess: {})
 } 
+ 
