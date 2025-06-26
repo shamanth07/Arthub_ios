@@ -1,4 +1,3 @@
-
 import SwiftUI
 import FirebaseDatabase
 import Kingfisher
@@ -11,6 +10,7 @@ struct AdminReport: Identifiable {
     let rsvpCount: Int
     let mostLikedArtist: String
     let confirmedVisitors: [String]
+    var topArtistLikes: Int = 0
 }
 
 struct ReportsPage: View {
@@ -52,6 +52,7 @@ struct ReportsPage: View {
         let ref = Database.database().reference().child("adminreports")
         ref.observeSingleEvent(of: .value) { snapshot in
             var loaded: [AdminReport] = []
+            let group = DispatchGroup()
             for child in snapshot.children {
                 if let snap = child as? DataSnapshot,
                    let dict = snap.value as? [String: Any] {
@@ -66,24 +67,56 @@ struct ReportsPage: View {
                     if let arr = confirmedVisitorsArray as? [String] {
                         confirmedVisitors = arr
                     } else if let dict = dict["confirmedVisitors"] as? [String: Any] {
-                        // fallback for dictionary structure
                         confirmedVisitors = dict.values.compactMap { $0 as? String }
                     } else {
                         confirmedVisitors = []
                     }
-                    let report = AdminReport(
+                    var report = AdminReport(
                         id: id,
                         bannerImageUrl: bannerImageUrl,
                         title: title,
                         interestedCount: interestedCount,
                         rsvpCount: rsvpCount,
                         mostLikedArtist: mostLikedArtist,
-                        confirmedVisitors: confirmedVisitors
+                        confirmedVisitors: confirmedVisitors,
+                        topArtistLikes: 0
                     )
-                    loaded.append(report)
+                    if !mostLikedArtist.isEmpty {
+                        group.enter()
+                        let artistsRef = Database.database().reference().child("artists")
+                        artistsRef.queryOrdered(byChild: "name").queryEqual(toValue: mostLikedArtist).observeSingleEvent(of: .value) { artistSnap in
+                            var artistUid: String? = nil
+                            for child in artistSnap.children {
+                                if let snap = child as? DataSnapshot {
+                                    artistUid = snap.key
+                                    break
+                                }
+                            }
+                            if let artistUid = artistUid {
+                                let artworksRef = Database.database().reference().child("artworks")
+                                artworksRef.queryOrdered(byChild: "artistId").queryEqual(toValue: artistUid).observeSingleEvent(of: .value) { artSnap in
+                                    var totalLikes = 0
+                                    for artChild in artSnap.children {
+                                        if let artDict = (artChild as? DataSnapshot)?.value as? [String: Any],
+                                           let likes = artDict["likes"] as? Int {
+                                            totalLikes += likes
+                                        }
+                                    }
+                                    report.topArtistLikes = totalLikes
+                                    loaded.append(report)
+                                    group.leave()
+                                }
+                            } else {
+                                loaded.append(report)
+                                group.leave()
+                            }
+                        }
+                    } else {
+                        loaded.append(report)
+                    }
                 }
             }
-            DispatchQueue.main.async {
+            group.notify(queue: .main) {
                 self.reports = loaded
                 self.isLoading = false
             }
@@ -115,6 +148,11 @@ struct ReportCard: View {
                 .font(.subheadline)
             Text("Top Artist: \(report.mostLikedArtist)")
                 .font(.subheadline)
+            if !report.mostLikedArtist.isEmpty {
+                Text("Total Likes (Top Artist): \(report.topArtistLikes)")
+                    .font(.subheadline)
+                    .foregroundColor(.purple)
+            }
             Text("Visitors: \(report.confirmedVisitors.joined(separator: ", "))")
                 .font(.subheadline)
                 .foregroundColor(.gray)
@@ -128,4 +166,4 @@ struct ReportCard: View {
 
 #Preview {
     ReportsPage()
-}
+} 
