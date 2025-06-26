@@ -211,8 +211,3 @@ struct SettingsView: View {
         }
     }
 }
-
-// Remove or update the preview to provide required arguments
-// #Preview {
-//     SettingsView(currentUserRole: "admin", currentUserName: "Admin")
-// }

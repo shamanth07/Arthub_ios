@@ -10,16 +10,16 @@ struct AdminHomeView: View {
     @State private var showAccount = false
     @State private var showEditEvent = false
     @State private var selectedEvent: Event? = nil
-    @State private var eventToDelete: Event? = nil
     @State private var showUpdateSuccess = false
     @State private var errorMessage: String? = nil
     @State private var showingManageInvitations = false
     @State private var showMessagesList = false
     @State private var hasUnreadMessages = false
     @State private var unreadMessageCount = 0
-    // Replace with actual admin email from auth if available
     let adminEmail: String = "abhishek991116"
     @State private var showCommentsSheet = false
+    @State private var showDeleteError = false
+    @State private var showDeleteAlert = false
     var onLogout: () -> Void
     
     var body: some View {
@@ -103,7 +103,10 @@ struct AdminHomeView: View {
                                             showEditEvent = true
                                     },
                                     onDelete: {
-                                            eventToDelete = event
+                                            print("onDelete closure called for event: \(event.title)")
+                                            selectedEvent = event
+                                            showDeleteAlert = true
+                                            print("showDeleteAlert set to true for event: \(event.title)")
                                     },
                                     onShowComments: {
                                         selectedEvent = event
@@ -165,18 +168,49 @@ struct AdminHomeView: View {
                 }
             }
         }
-        .alert(item: $eventToDelete) { event in
-            Alert(
-                title: Text("Delete Event"),
-                message: Text("Are you sure you want to delete this event?"),
-                primaryButton: .destructive(Text("Delete")) {
-                    deleteEvent(event)
-                },
-                secondaryButton: .cancel()
-            )
+        .sheet(isPresented: $showDeleteAlert) {
+            VStack(spacing: 20) {
+                Text("Delete Event")
+                    .font(.title2)
+                    .fontWeight(.bold)
+                
+                Text("Are you sure you want to delete this event?")
+                    .multilineTextAlignment(.center)
+                    .foregroundColor(.gray)
+                
+                HStack(spacing: 20) {
+                    Button("Cancel") {
+                        showDeleteAlert = false
+                    }
+                    .foregroundColor(.gray)
+                    .padding()
+                    .background(Color.gray.opacity(0.2))
+                    .cornerRadius(8)
+                    
+                    Button("Delete") {
+                        print("Delete button in sheet tapped")
+                        if let event = selectedEvent {
+                            print("Calling deleteEvent for: \(event.title)")
+                            deleteEvent(event)
+                        } else {
+                            print("selectedEvent is nil!")
+                        }
+                        showDeleteAlert = false
+                    }
+                    .foregroundColor(.white)
+                    .padding()
+                    .background(Color.red)
+                    .cornerRadius(8)
+                }
+            }
+            .padding()
+            .presentationDetents([.height(200)])
         }
         .alert(isPresented: $showUpdateSuccess) {
             Alert(title: Text("Success"), message: Text("Event updated successfully!"), dismissButton: .default(Text("OK")))
+        }
+        .alert(isPresented: $showDeleteError) {
+            Alert(title: Text("Delete Error"), message: Text(errorMessage ?? "Unknown error occurred"), dismissButton: .default(Text("OK")))
         }
         .sheet(isPresented: $showMessagesList) {
             MessageSendersListView(
@@ -191,6 +225,9 @@ struct AdminHomeView: View {
         }
         .onAppear {
             observeUnreadMessages()
+        }
+        .onChange(of: showDeleteAlert) { newValue in
+            print("showDeleteAlert changed to: \(newValue)")
         }
     }
     
@@ -250,13 +287,35 @@ struct AdminHomeView: View {
     
     func deleteEvent(_ event: Event) {
         print("Attempting to delete event with id: \(event.id)")
+        print("Event title: \(event.title)")
+        
         let ref = Database.database().reference().child("events").child(event.id)
-        ref.removeValue { error, _ in
-            if let error = error {
-                print("Delete error: \(error.localizedDescription)")
-            } else {
-                print("Event deleted successfully.")
-                fetchEvents()
+        
+        // First check if the event exists
+        ref.observeSingleEvent(of: .value) { snapshot in
+            if !snapshot.exists() {
+                print("Error: Event does not exist in database")
+                DispatchQueue.main.async {
+                    self.errorMessage = "Event not found in database"
+                }
+                return
+            }
+            
+            // Proceed with deletion
+            ref.removeValue { error, _ in
+                DispatchQueue.main.async {
+                    if let error = error {
+                        print("Delete error: \(error.localizedDescription)")
+                        self.errorMessage = "Failed to delete event: \(error.localizedDescription)"
+                        self.showDeleteError = true
+                    } else {
+                        print("Event deleted successfully.")
+                        // Remove from local array immediately
+                        self.events.removeAll { $0.id == event.id }
+                        // Refresh the list
+                        self.fetchEvents()
+                    }
+                }
             }
         }
     }
@@ -360,7 +419,7 @@ struct EventCard: View {
                         .font(.callout)
                         .foregroundColor(.purple)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(BorderlessButtonStyle())
                 .padding(.top, 4)
             }
             
@@ -369,16 +428,25 @@ struct EventCard: View {
             VStack(spacing: 24) {
                 Button(action: onEdit) {
                     Image(systemName: "pencil")
+                        .font(.title2)
                 }
-                .buttonStyle(.plain)
-                Button(action: onDelete) {
+                .buttonStyle(BorderlessButtonStyle())
+                
+                Button(action: {
+                    print("Delete button tapped for event: \(event.title)")
+                    onDelete()
+                }) {
                     Image(systemName: "trash")
+                        .font(.title2)
+                        .foregroundColor(.white)
+                        .padding(8)
+                        .background(Color.red)
+                        .cornerRadius(8)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(BorderlessButtonStyle())
             }
             .foregroundColor(.black)
         }
-        .buttonStyle(.plain)
     }
 }
 

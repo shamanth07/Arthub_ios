@@ -68,4 +68,4 @@ struct ChatUser: Identifiable {
     let id: String
     let email: String
     let role: String
-}
+} 

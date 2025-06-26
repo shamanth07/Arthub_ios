@@ -128,3 +128,4 @@ struct LoginView: View {
 #Preview {
     LoginView(onSignUp: {}, onLoginSuccess: { _ in })
 }
+

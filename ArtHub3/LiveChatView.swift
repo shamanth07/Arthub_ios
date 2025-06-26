@@ -118,4 +118,4 @@ struct LiveChatView: View {
         ref.setValue(msgData)
         newMessage = ""
     }
-}
+} 
