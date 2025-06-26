@@ -30,6 +30,20 @@ class AuthViewModel: ObservableObject {
                     if let error = error {
                         completion(false, error.localizedDescription)
                     } else {
+                        // If artist, also create artist info under /artists/{uid}
+                        if role.lowercased() == "artist" {
+                            let artistData: [String: Any] = [
+                                "email": email,
+                                "bio": "",
+                                "name": email.components(separatedBy: "@").first ?? "Artist",
+                                "profileImageUrl": "",
+                                "socialLinks": [
+                                    "instagram": "",
+                                    "website": ""
+                                ]
+                            ]
+                            self?.dbRef.child("artists").child(uid).setValue(artistData)
+                        }
                         completion(true, nil)
                     }
                 }
